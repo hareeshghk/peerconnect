@@ -1,4 +1,4 @@
-// main.js (initial part)
+// Getting elements from the html
 const localVideo = document.getElementById('localVideo');
 const remoteVideo = document.getElementById('remoteVideo');
 const startCamButton = document.getElementById('startCamButton');
@@ -10,20 +10,23 @@ const sendButton = document.getElementById('sendButton');
 const chatMessagesDiv = document.getElementById('chatMessages');
 const myUserIdDisplay = document.getElementById('myUserIdDisplay');
 
+// local variables
 let localStream;
 let remoteStream;
 let peerConnection;
-let signalingWebSocket; // We'll set this up later
-let dataChannel; // Add this variable globally or scoped appropriately
+let signalingWebSocket; 
+let dataChannel;
 let hasLocalVideo = false;
 
-let myId = 'user-' + Math.random().toString(36).substring(2, 9); // Simple unique ID
+// Generating unique ID
+let myId = 'user-' + Math.random().toString(36).substring(2, 9); 
 if (myUserIdDisplay) {
     myUserIdDisplay.textContent =  myId;
 } else {
     console.error("Could not find #myUserIdDisplay element in HTML!");
 }
 
+// Logging id to console.
 console.log('My ID:', myId);
 
 // Function to get media stream with fallback
@@ -108,7 +111,7 @@ startCamButton.onclick = async () => {
 
 // main.js (continued)
 function connectWebSocket() {
-    // Replace with your actual server IP/domain if not localhost
+    // Replace with your actual server IP/domain, replaced with local ip assigned to my system from router.
     signalingWebSocket = new WebSocket('ws://192.168.1.10:8080');
 
     signalingWebSocket.onopen = () => {
@@ -165,15 +168,6 @@ function connectWebSocket() {
     };
 }
 
-// Helper to send messages via WebSocket
-function sendMessage(message) {
-    if (signalingWebSocket && signalingWebSocket.readyState === WebSocket.OPEN) {
-        signalingWebSocket.send(JSON.stringify(message));
-    } else {
-        console.error('WebSocket is not connected.');
-    }
-}
-
 // Call this function early on, perhaps after getting the ID
 connectWebSocket();
 
@@ -208,7 +202,7 @@ function setupPeerConnectionEventHandlers() {
     remoteVideo.style.backgroundColor = '';
     remoteVideo.poster = '';
 
-    // *** LISTEN FOR INCOMING DATA CHANNEL ***
+    // Listen for incoming data channel.
     peerConnection.ondatachannel = (event) => {
         console.log('Incoming data channel detected!');
         dataChannel = event.channel; // Get the channel created by the other peer
@@ -221,10 +215,10 @@ function setupPeerConnectionEventHandlers() {
         console.log('Remote track received:', event.track.kind, ' ID:', event.track.id);
         // Create a new stream if it doesn't exist
         if (!remoteStream) {
-           remoteStream = new MediaStream();
-           remoteVideo.srcObject = remoteStream;
+            remoteStream = new MediaStream();
+            remoteVideo.srcObject = remoteStream;
 
-           // Add listeners to detect when tracks are actually added/removed
+            // Add listeners to detect when tracks are actually added/removed
             // Useful for handling dynamic changes or initial state
             remoteStream.onaddtrack = (e) => {
                 console.log("Track added to remote stream:", e.track.kind);
@@ -278,7 +272,7 @@ function setupPeerConnectionEventHandlers() {
     }
 }
 
-// *** Setup Data Channel Handlers ***
+// Setup Data Channel Handlers
 function setupDataChannelEventHandlers(channel) {
     channel.onopen = () => {
         console.log(`Data channel '${channel.label}' opened!`);
@@ -347,7 +341,7 @@ callButton.onclick = async () => {
     // 1. Create PeerConnection
     peerConnection = new RTCPeerConnection(configuration);
 
-    // *** CREATE DATA CHANNEL ***
+    // Creating data channel
     // Create it BEFORE creating the offer.
     // Label can be anything, options configure reliability (default is reliable/ordered like TCP)
     dataChannel = peerConnection.createDataChannel("chatMessages", { ordered: true });
@@ -431,23 +425,6 @@ async function handleOffer(offer, senderId) {
 
     } catch (error) {
         console.error('Error handling offer or creating answer:', error);
-        resetCallState();
-    }
-}
-
-async function handleAnswer(answer) {
-    if (!peerConnection) {
-        console.error('Received answer but no peer connection exists.');
-        return;
-    }
-    console.log('Received answer');
-    try {
-        // Set Remote Description
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-        console.log('Set remote description (answer)');
-        // Connection should now start establishing via ICE exchange
-    } catch (error) {
-        console.error('Error setting remote description (answer):', error);
         resetCallState();
     }
 }
@@ -556,13 +533,20 @@ function sendMessageViaDataChannel() {
 
 // Add event listener for the send button
 sendButton.onclick = sendMessageViaDataChannel;
-
 chatInput.addEventListener('keypress', (event) => {
     if (event.key === 'Enter') {
         sendMessageViaDataChannel();
     }
 });
 
+// Initial UI state
+callButton.disabled = true;
+hangupButton.disabled = true;
+chatInput.disabled = true;
+sendButton.disabled = true;
+
+
+// Helper functions.
 // Helper to display messages in the UI
 function displayChatMessage(message, sender) {
     const messageElement = document.createElement('p');
@@ -571,7 +555,7 @@ function displayChatMessage(message, sender) {
     chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight; // Auto-scroll
 }
 
-// *** Helper function to update remote video appearance ***
+// Helper function to update remote video appearance
 function updateRemoteVideoAppearance() {
     if (!remoteStream || !remoteVideo) return; // Exit if stream or element is not ready
 
@@ -597,9 +581,28 @@ function updateRemoteVideoAppearance() {
     }
 }
 
-// Initial UI state
-callButton.disabled = true;
-hangupButton.disabled = true;
-chatInput.disabled = true;
-sendButton.disabled = true;
+async function handleAnswer(answer) {
+    if (!peerConnection) {
+        console.error('Received answer but no peer connection exists.');
+        return;
+    }
+    console.log('Received answer');
+    try {
+        // Set Remote Description
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+        console.log('Set remote description (answer)');
+        // Connection should now start establishing via ICE exchange
+    } catch (error) {
+        console.error('Error setting remote description (answer):', error);
+        resetCallState();
+    }
+}
 
+// Helper to send messages via WebSocket
+function sendMessage(message) {
+    if (signalingWebSocket && signalingWebSocket.readyState === WebSocket.OPEN) {
+        signalingWebSocket.send(JSON.stringify(message));
+    } else {
+        console.error('WebSocket is not connected.');
+    }
+}
