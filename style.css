@@ -17,6 +17,7 @@ body {
     border-radius: 5px;
     font-size: 0.9em;
     z-index: 100; /* Ensure it stays on top of other elements */
+    line-height: 1.6;
 }
 
 #myUserIdDisplay {
@@ -63,11 +64,6 @@ button, input {
     background-color: #f9f9f9;
 }
 
-#chatMessages p {
-    margin: 2px 0;
-    font-size: 0.9em;
-}
-
 .status {
     margin-top: 10px;
     font-weight: bold;
@@ -81,4 +77,37 @@ button, input {
 }
 .status.success {
     color: green;
+}
+
+#myNameInput {
+    padding: 4px 6px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+}
+
+#chatMessages p {
+    margin: 4px 0; /* Adjust spacing */
+    padding: 2px 5px;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+/* Style for your own messages */
+.my-message {
+    text-align: right; /* Align your messages to the right */
+    background-color: #dcf8c6; /* Light green background */
+    margin-left: 20%; /* Indent from left */
+}
+
+/* Style for peer's messages */
+.peer-message {
+    text-align: left; /* Default alignment */
+    background-color: #f1f0f0; /* Light grey background */
+    margin-right: 20%; /* Indent from right */
+}
+
+/* Style for the sender name */
+#chatMessages p strong {
+    margin-right: 5px;
+    /* color: #333; // Optional: specific color for name */
 }

@@ -10,6 +10,8 @@ const sendButton = document.getElementById('sendButton');
 const chatMessagesDiv = document.getElementById('chatMessages');
 const myUserIdDisplay = document.getElementById('myUserIdDisplay');
 const statusMessageEl = document.getElementById('statusMessage');
+const myNameInput = document.getElementById('myNameInput');
+const userIdInfoSpan = document.getElementById('userIdInfo');
 
 // local variables
 let localStream;
@@ -19,16 +21,25 @@ let signalingWebSocket;
 let dataChannel;
 let hasLocalVideo = false;
 
+// default empty name
+let myName = '';
 // Generating unique ID
 let myId = 'user-' + Math.random().toString(36).substring(2, 9); 
-if (myUserIdDisplay) {
-    myUserIdDisplay.textContent =  myId;
-} else {
-    console.error("Could not find #myUserIdDisplay element in HTML!");
-}
-
 // Logging id to console.
 console.log('My ID:', myId);
+myUserIdDisplay.textContent =  myId;
+
+if (myNameInput) {
+    // Update name when the input loses focus (onblur) or Enter is pressed
+    myNameInput.onblur = updateMyName;
+    myNameInput.onkeypress = (event) => {
+        if (event.key === 'Enter') {
+            myNameInput.blur();
+        }
+    };
+}
+
+updateUserInfoDisplay();
 
 // Function to get media stream with fallback
 async function startMedia() {
@@ -287,6 +298,7 @@ function setupDataChannelEventHandlers(channel) {
         console.log(`Data channel '${channel.label}' opened!`);
         chatInput.disabled = false; // Enable input
         sendButton.disabled = false;
+        updateStatus('Chat connected!', 'success');
         // Now you can reliably send messages. Enable chat input field?
         // e.g., chatInput.disabled = false; sendButton.disabled = false;
     };
@@ -295,6 +307,7 @@ function setupDataChannelEventHandlers(channel) {
         console.log(`Data channel '${channel.label}' closed.`);
         chatInput.disabled = true; // Disable input
         sendButton.disabled = true;
+        updateStatus('Chat disconnected.', 'info');
         // Disable chat input field?
         // e.g., chatInput.disabled = true; sendButton.disabled = true;
     };
@@ -304,11 +317,24 @@ function setupDataChannelEventHandlers(channel) {
     };
 
     channel.onmessage = (event) => {
-        console.log(`Message received on '${channel.label}':`, event.data);
-        displayChatMessage(event.data, 'Peer');
-        // Display the message in your chat UI
-        // e.g., displayChatMessage(event.data, 'Peer');
-        // If sending JSON: const messageData = JSON.parse(event.data);
+        try {
+            const messageData = JSON.parse(event.data);
+            console.log(`Parsed message received on '${channel.label}':`, messageData);
+
+            // Check if it has the expected structure
+            if (messageData && messageData.senderName && typeof messageData.text !== 'undefined') {
+                // Display using the sender's name from the message data
+                displayChatMessage(messageData.text, messageData.senderName);
+            } else {
+                console.warn("Received data channel message in unexpected format:", event.data);
+                // Fallback: display raw data if structure is wrong
+                displayChatMessage(`Raw: ${event.data}`, 'Unknown Peer');
+            }
+        } catch(error) {
+            console.error("Failed to parse data channel message or invalid JSON:", event.data, error);
+             // Display raw data if parsing fails
+             displayChatMessage(`Raw: ${event.data}`, 'Unknown Peer (Error)');
+        }
     };
 }
 
@@ -514,6 +540,7 @@ function resetCallState() {
     hangupButton.disabled = true;
     peerIdInput.disabled = false;
 
+    updateUserInfoDisplay();
     clearStatus();
 
     if (chatInput) chatInput.disabled = true;
@@ -549,16 +576,26 @@ function sendMessageViaDataChannel() {
     const message = chatInput.value;
     if (!message) return;
     if (dataChannel && dataChannel.readyState === 'open') {
+        // Create a JSON object with sender name and message text
+        const messageData = {
+            senderName: getDisplayName(), // Use helper to get current name or ID
+            text: message
+        };
+
+        const jsonMessage = JSON.stringify(messageData);
+
         try {
-            dataChannel.send(message);
-            console.log('Sent message:', message);
-            displayChatMessage(message, 'Me'); // Display your own message
+            dataChannel.send(jsonMessage);
+            console.log('Sent message:', messageData);
+            displayChatMessage(message, getDisplayName()); // Display your own message
             chatInput.value = ''; // Clear input
         } catch (error) {
             console.error('Error sending message:', error);
+            updateStatus('Error sending message.', 'error');
         }
     } else {
-        console.warn('Cannot send message, data channel is not open.');
+        console.warn('Cannot send message, channel for chat is not open.');
+        updateStatus('Chat channel not open.', 'error');
     }
 }
 
@@ -580,11 +617,24 @@ clearStatus();
 
 // Helper functions.
 // Helper to display messages in the UI
-function displayChatMessage(message, sender) {
+function displayChatMessage(messageText, senderName) {
     const messageElement = document.createElement('p');
-    messageElement.textContent = `${sender}: ${message}`;
+    // Determine if the message is from "Me" or the peer for potential styling
+    const ownNameOrId = getDisplayName(); // Get my current name/id
+    let displaySender = senderName;
+    let messageClass = 'peer-message'; // Default class
+
+    if (senderName === ownNameOrId) {
+        // It's my own message (or appears to be)
+        // Optional: Display "Me" instead of own name/ID for clarity
+        displaySender = "Me";
+        messageClass = 'my-message';
+    }
+    messageElement.innerHTML = `<strong>${displaySender}:</strong> ${messageText}`; // Use innerHTML to allow bold tag
+    messageElement.classList.add(messageClass); // Add class for styling
+
     chatMessagesDiv.appendChild(messageElement);
-    chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight; // Auto-scroll
+    chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
 }
 
 // Helper function to update remote video appearance
@@ -649,4 +699,24 @@ function clearStatus() {
     if (!statusMessageEl) return;
     statusMessageEl.textContent = '';
     statusMessageEl.className = 'status';
+}
+
+function updateMyName() {
+    if (myNameInput) {
+        myName = myNameInput.value.trim(); // Get value and remove whitespace
+        console.log(`My name set to: ${myName}`);
+        updateUserInfoDisplay(); // Update the top display with the new name
+    }
+}
+
+function updateUserInfoDisplay() {
+    // Update the text content to show Name (if set) and ID
+    const nameToShow = myName ? myName : 'Guest'; // Use 'Guest' or keep blank if no name
+    userIdInfoSpan.innerHTML = `You: <strong>${nameToShow}</strong> (ID: <span id="myUserIdDisplay">${myId}</span>)`;
+    // Note: Re-setting innerHTML for myUserIdDisplay is slightly redundant but ensures it's always present
+}
+
+function getDisplayName() {
+    // Helper to get the name to be sent in messages (use ID if name is empty)
+    return myName || myId;
 }
