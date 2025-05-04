@@ -86,7 +86,16 @@ async function startMedia() {
         } else {
             // Different error (e.g., user denied everything, hardware issue)
             stream = null;
-             alert(`Could not access camera/microphone: ${err.message}. Please check permissions/devices.`);
+            alert(`Could not access camera/microphone: ${err.message}. Please check permissions/devices.`);
+        }
+    }
+
+    if (stream) {
+        const audioTrack = stream.getAudioTracks();
+        if (audioTrack.length > 0) {
+            console.log("CALLER: Successfully got audio track:", audioTrack[0].id, "Enabled:", audioTrack[0].enabled);
+        } else {
+            console.error("CALLER: !!! FAILED to get audio track !!!");
         }
     }
 
@@ -250,7 +259,14 @@ function setupPeerConnectionEventHandlers() {
             };
         }
 
-        remoteStream.addTrack(event.track, remoteStream);
+        if (!remoteStream.getTrackById(event.track.id)) {
+            remoteStream.addTrack(event.track, remoteStream);
+        }
+
+        // Ensure remote video isn't muted on Callee's side
+        remoteVideo.muted = false;
+        
+        console.log(`CALLEE: Tracks currently in remoteStream: ${remoteStream.getTracks().map(t => `${t.kind}(${t.id})`).join(', ')}`);
         updateRemoteVideoAppearance();
     };
 
