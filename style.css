@@ -67,3 +67,18 @@ button, input {
     margin: 2px 0;
     font-size: 0.9em;
 }
+
+.status {
+    margin-top: 10px;
+    font-weight: bold;
+    min-height: 1.2em; /* Prevent layout shifts */
+}
+.status.error {
+    color: red;
+}
+.status.info {
+    color: blue;
+}
+.status.success {
+    color: green;
+}

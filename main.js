@@ -9,6 +9,7 @@ const chatInput = document.getElementById('chatInput');
 const sendButton = document.getElementById('sendButton');
 const chatMessagesDiv = document.getElementById('chatMessages');
 const myUserIdDisplay = document.getElementById('myUserIdDisplay');
+const statusMessageEl = document.getElementById('statusMessage');
 
 // local variables
 let localStream;
@@ -142,18 +143,22 @@ function connectWebSocket() {
                 await handleCandidate(message.candidate);
                 break;
             case 'hangup':
-                // Peer hung up
+                updateStatus('Peer disconnected.', 'info');
                 handleHangup();
                 break;
             case 'error':
+                console.error('Received error from signaling server:', message.message);
                 // Server sent an error (e.g., user not found)
-                alert(message.message);
-                resetCallState(); // Reset UI etc.
+                // alert(message.message);
+                updateStatus(message.message, 'error');
+                if (!hangupButton.disabled) {
+                    resetCallState(); // Reset UI and connection state
+                }
                 break;
             case 'identified':
-                 console.log(`Server confirmed identification as ${message.id}`);
-                 // You could update UI here if needed
-                 break;
+                console.log(`Server confirmed identification as ${message.id}`);
+                // You could update UI here if needed
+                break;
             default:
                 console.log('Unknown message type:', message.type);
         }
@@ -332,15 +337,35 @@ callButton.onclick = async () => {
     const targetPeerId = peerIdInput.value;
 
     if (!targetPeerId) {
-        alert('Please enter the ID of the peer you want to call.');
+        updateStatus('Please enter the ID of the peer to call.', 'error');
         return;
     }
     if (!localStream) {
-         alert("Please start your camera first.");
-         return;
+        updateStatus("Please start your camera first.", 'error');
+        return;
     }
 
+    // Check if already trying to call or connected.
+    // A simple check is to see if hangupButton is enabled, implying a call is active/attempting
+    if (!hangupButton.disabled) {
+        console.warn("Call attempt already in progress or connected.");
+        updateStatus("Call already active");
+        return;
+   }
+
     console.log(`Initiating call to ${targetPeerId}`);
+    updateStatus(`Calling ${targetPeerId}...`, 'info');
+
+    // *** Disable Call button immediately ***
+    callButton.disabled = true;
+    peerIdInput.disabled = true; // Disable input too
+    hangupButton.disabled = false; // Enable Hang Up (to cancel attempt)
+
+    // Create PeerConnection (assuming it's not already created)
+    if (peerConnection) { // Clean up previous attempt if necessary
+        console.warn("Cleaning up previous peer connection before new call");
+        closeConnection();
+    }
 
     // 1. Create PeerConnection
     peerConnection = new RTCPeerConnection(configuration);
@@ -378,6 +403,7 @@ callButton.onclick = async () => {
 
     } catch (error) {
         console.error('Error creating offer or setting local description:', error);
+        updateStatus(`Error starting call: ${error.message}`, 'error');
         resetCallState(); // Clean up if offer fails
     }
 };
@@ -434,17 +460,15 @@ async function handleOffer(offer, senderId) {
 }
 
 // main.js (Hangup Logic)
-hangupButton.onclick = () => {
-    handleHangup();
-     // Notify the other peer
-    if (peerIdInput.value) { // Check if we were in a call
-         sendMessage({ type: 'hangup', target: peerIdInput.value });
-    }
-};
+hangupButton.onclick = handleHangup;
 
 function handleHangup() {
     console.log('Hanging up call.');
-    closeConnection();
+    // Notify the other peer if connected
+    const targetPeerId = peerIdInput.value; // Get ID from input (might be caller or callee)
+    if (targetPeerId && peerConnection && (peerConnection.connectionState === 'connected' || peerConnection.connectionState === 'connecting')) {
+        sendMessage({ type: 'hangup', target: targetPeerId });
+    }
     resetCallState();
 }
 
@@ -489,7 +513,9 @@ function resetCallState() {
     callButton.disabled = !localStream; // Re-enable if camera is on
     hangupButton.disabled = true;
     peerIdInput.disabled = false;
-    peerIdInput.value = '';
+
+    clearStatus();
+
     if (chatInput) chatInput.disabled = true;
     if (sendButton) sendButton.disabled = true;
     if (chatMessagesDiv) chatMessagesDiv.innerHTML = '';
@@ -513,6 +539,7 @@ function resetCallState() {
 
     // Reset remote video appearance
     if (remoteVideo) {
+        remoteVideo.srcObject = null;
         remoteVideo.style.backgroundColor = '';
         remoteVideo.poster = '';
     }
@@ -548,6 +575,7 @@ callButton.disabled = true;
 hangupButton.disabled = true;
 chatInput.disabled = true;
 sendButton.disabled = true;
+clearStatus();
 
 
 // Helper functions.
@@ -609,4 +637,16 @@ function sendMessage(message) {
     } else {
         console.error('WebSocket is not connected.');
     }
+}
+
+function updateStatus(message, type = 'info') { // type can be 'info', 'error', 'success'
+    if (!statusMessageEl) return;
+    statusMessageEl.textContent = message;
+    statusMessageEl.className = `status ${type}`; // Set class for styling
+}
+
+function clearStatus() {
+    if (!statusMessageEl) return;
+    statusMessageEl.textContent = '';
+    statusMessageEl.className = 'status';
 }
