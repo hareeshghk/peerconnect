@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Simple WebRTC P2P Call</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>WebRTC P2P Video Call</h1>
+    <div>
+        <video id="localVideo" autoplay playsinline muted></video>
+        <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+    <div>
+        <button id="startCamButton">Start Camera</button>
+        <input type="text" id="peerIdInput" placeholder="Enter Peer ID to call"/>
+        <button id="callButton" disabled>Call Peer</button>
+        <button id="hangupButton" disabled>Hang Up</button>
+    </div>
+    <script src="main.js"></script>
+</body>
+</html>
