@@ -112,7 +112,11 @@ startCamButton.onclick = async () => {
 // main.js (continued)
 function connectWebSocket() {
     // Replace with your actual server IP/domain, replaced with local ip assigned to my system from router.
-    signalingWebSocket = new WebSocket('ws://192.168.1.10:8080');
+    // for local running siganling server
+    // signalingWebSocket = new WebSocket('ws://localhost:8080');
+
+    // for remote running signal server
+    signalingWebSocket = new WebSocket('wss://signal-server-first-version.azurewebsites.net');
 
     signalingWebSocket.onopen = () => {
         console.log('WebSocket connected');
