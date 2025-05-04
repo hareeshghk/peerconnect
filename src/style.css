@@ -1,0 +1,72 @@
+/* style.css */
+
+body {
+    font-family: sans-serif;
+    padding-top: 40px; /* Add some top padding so main content isn't hidden under the fixed ID box */
+    position: relative; /* Good practice if using absolute positioning inside */
+}
+
+/* Style for the user ID container */
+#userInfo {
+    position: fixed; /* Position relative to the viewport */
+    top: 10px;       /* Space from the top edge */
+    right: 10px;      /* Space from the right edge */
+    background-color: #eee;
+    border: 1px solid #ccc;
+    padding: 5px 10px;
+    border-radius: 5px;
+    font-size: 0.9em;
+    z-index: 100; /* Ensure it stays on top of other elements */
+}
+
+/* Optional: Style the ID itself */
+#myUserIdDisplay {
+    font-weight: bold;
+    color: #333;
+}
+
+/* --- Rest of your existing styles --- */
+
+h1 {
+    text-align: center;
+}
+
+video {
+    border: 1px solid black;
+    margin: 5px;
+    max-width: 45%; /* Adjust layout as needed */
+    background-color: #222; /* Placeholder background */
+}
+
+#localVideo {
+    /* Specific styles if needed */
+}
+
+#remoteVideo {
+    /* Specific styles if needed */
+}
+
+div {
+    text-align: center; /* Center buttons/inputs */
+    margin-bottom: 10px;
+}
+
+button, input {
+    padding: 8px 12px;
+    margin: 0 5px;
+}
+
+#chatMessages {
+    height: 150px;
+    overflow-y: auto;
+    border: 1px solid #ccc;
+    margin-top: 10px;
+    text-align: left;
+    padding: 5px;
+    background-color: #f9f9f9;
+}
+
+#chatMessages p {
+    margin: 2px 0;
+    font-size: 0.9em;
+}

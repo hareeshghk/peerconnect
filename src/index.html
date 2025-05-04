@@ -5,6 +5,9 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <div id="userInfo">
+        Your ID: <span id="myUserIdDisplay">Initializing...</span>
+    </div>
     <h1>WebRTC P2P Video Call</h1>
     <div>
         <video id="localVideo" autoplay playsinline muted></video>
@@ -16,6 +19,11 @@
         <button id="callButton" disabled>Call Peer</button>
         <button id="hangupButton" disabled>Hang Up</button>
     </div>
+    <div>
+        <input type="text" id="chatInput" placeholder="Enter message..." disabled/>
+        <button id="sendButton" disabled>Send</button>
+    <div id="chatMessages"></div> <!-- To display messages -->
+</div>
     <script src="main.js"></script>
 </body>
 </html>
