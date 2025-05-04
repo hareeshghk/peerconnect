@@ -4,38 +4,112 @@ const remoteVideo = document.getElementById('remoteVideo');
 const startCamButton = document.getElementById('startCamButton');
 const callButton = document.getElementById('callButton');
 const hangupButton = document.getElementById('hangupButton');
-const peerIdInput = document.getElementById('peerIdInput'); // Assuming you add this
+const peerIdInput = document.getElementById('peerIdInput'); // User will input this
+const chatInput = document.getElementById('chatInput');
+const sendButton = document.getElementById('sendButton');
+const chatMessagesDiv = document.getElementById('chatMessages');
+const myUserIdDisplay = document.getElementById('myUserIdDisplay');
 
 let localStream;
 let remoteStream;
 let peerConnection;
 let signalingWebSocket; // We'll set this up later
 let dataChannel; // Add this variable globally or scoped appropriately
-let myId = 'user-' + Math.random().toString(36).substr(2, 9); // Simple unique ID
+let hasLocalVideo = false;
+
+let myId = 'user-' + Math.random().toString(36).substring(2, 9); // Simple unique ID
+if (myUserIdDisplay) {
+    myUserIdDisplay.textContent =  myId;
+} else {
+    console.error("Could not find #myUserIdDisplay element in HTML!");
+}
+
 console.log('My ID:', myId);
-// Add an element to display the ID or use the console
+
+// Function to get media stream with fallback
+async function startMedia() {
+    let stream = null;
+    let constraintsVideoAudio = { video: true, audio: true };
+    let constraintsAudioOnly = { audio: true };
+    hasLocalVideo = false; // Reset flag
+
+    try {
+        // 1. Try getting video and audio
+        console.log("Attempting to get video and audio stream...");
+        stream = await navigator.mediaDevices.getUserMedia(constraintsVideoAudio);
+        hasLocalVideo = true; // Success! We have video.
+        console.log("Acquired video and audio stream.");
+        localVideo.style.display = ''; // Ensure video element is visible
+        localVideo.style.backgroundColor = ''; // Reset background
+
+    } catch (err) {
+        console.warn("getUserMedia(video+audio) failed:", err.name, err.message);
+
+        // 2. If failed, try audio only (Common errors: NotFoundError, NotAllowedError for video)
+        // Check if the error is likely related to video device/permission issues
+        if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError" ||
+            err.name === "NotAllowedError" || err.name === "NotReadableError" ||
+            err.message.toLowerCase().includes("video"))
+        {
+            console.log("Attempting to get audio-only stream...");
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(constraintsAudioOnly);
+                hasLocalVideo = false; // Indicate we only have audio
+                console.log("Acquired audio-only stream.");
+                // Optionally hide local video element or show placeholder
+                // localVideo.style.display = 'none'; // Option 1: Hide
+                localVideo.style.backgroundColor = '#333'; // Option 2: Show dark background
+                localVideo.poster = ''; // Clear any previous poster
+                localVideo.style.display = ''; // Make sure it's visible if using background color
+
+
+            } catch (audioErr) {
+                console.error("getUserMedia(audio-only) also failed:", audioErr.name, audioErr.message);
+                stream = null; // Failed to get anything
+                alert(`Could not access microphone: ${audioErr.message}. Please check permissions.`);
+            }
+        } else {
+            // Different error (e.g., user denied everything, hardware issue)
+            stream = null;
+             alert(`Could not access camera/microphone: ${err.message}. Please check permissions/devices.`);
+        }
+    }
+
+    return stream; // Return the stream (or null if failed)
+}
+
 
 startCamButton.onclick = async () => {
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+    console.log("Start Camera button clicked");
+    localStream = await startMedia(); // Use the new function
+    if (localStream) {
+        console.log("Local stream acquired.");
         localVideo.srcObject = localStream;
-
-        // IMPORTANT: Keep your local video muted to prevent echo/feedback
-        localVideo.muted = true;
+        localVideo.muted = true; // Crucial for preventing echo
 
         startCamButton.disabled = true;
-        callButton.disabled = false; // Enable call button only after cam starts
-        console.log('Local stream started');
-    } catch (error) {
-        console.error('Error accessing media devices.', error);
-        alert('Could not access camera/microphone: ' + error.message);
+        callButton.disabled = false; // Enable calling now
+        hangupButton.disabled = true; // Ensure hangup is disabled until call starts
+
+        // Optional: Update UI based on hasLocalVideo
+        if (!hasLocalVideo) {
+            console.log("Proceeding with audio only locally.");
+            // UI is partially handled in startMedia (e.g., background color)
+        }
+
+    } else {
+        console.log("Failed to acquire any local stream.");
+        // Reset button states if failed
+        startCamButton.disabled = false;
+        callButton.disabled = true;
+        // UI alerts already shown in startMedia
     }
 };
 
 // main.js (continued)
 function connectWebSocket() {
     // Replace with your actual server IP/domain if not localhost
-    signalingWebSocket = new WebSocket('ws://localhost:8080');
+    signalingWebSocket = new WebSocket('ws://192.168.1.10:8080');
 
     signalingWebSocket.onopen = () => {
         console.log('WebSocket connected');
@@ -131,14 +205,39 @@ function addLocalTracks() {
 function setupPeerConnectionEventHandlers() {
     if (!peerConnection) return;
 
+    remoteVideo.style.backgroundColor = '';
+    remoteVideo.poster = '';
+
+    // *** LISTEN FOR INCOMING DATA CHANNEL ***
+    peerConnection.ondatachannel = (event) => {
+        console.log('Incoming data channel detected!');
+        dataChannel = event.channel; // Get the channel created by the other peer
+        console.log(`Received data channel: '${dataChannel.label}'`);
+        // Setup event handlers for the *received* channel
+        setupDataChannelEventHandlers(dataChannel);
+    };
+
     peerConnection.ontrack = (event) => {
-        console.log('Remote track received:', event.track.kind);
+        console.log('Remote track received:', event.track.kind, ' ID:', event.track.id);
         // Create a new stream if it doesn't exist
         if (!remoteStream) {
            remoteStream = new MediaStream();
            remoteVideo.srcObject = remoteStream;
+
+           // Add listeners to detect when tracks are actually added/removed
+            // Useful for handling dynamic changes or initial state
+            remoteStream.onaddtrack = (e) => {
+                console.log("Track added to remote stream:", e.track.kind);
+                updateRemoteVideoAppearance();
+            };
+            remoteStream.onremovetrack = (e) => {
+                console.log("Track removed from remote stream:", e.track.kind);
+                updateRemoteVideoAppearance();
+            };
         }
-        remoteStream.addTrack(event.track);
+
+        remoteStream.addTrack(event.track, remoteStream);
+        updateRemoteVideoAppearance();
     };
 
     peerConnection.onicecandidate = (event) => {
@@ -179,6 +278,37 @@ function setupPeerConnectionEventHandlers() {
     }
 }
 
+// *** Setup Data Channel Handlers ***
+function setupDataChannelEventHandlers(channel) {
+    channel.onopen = () => {
+        console.log(`Data channel '${channel.label}' opened!`);
+        chatInput.disabled = false; // Enable input
+        sendButton.disabled = false;
+        // Now you can reliably send messages. Enable chat input field?
+        // e.g., chatInput.disabled = false; sendButton.disabled = false;
+    };
+
+    channel.onclose = () => {
+        console.log(`Data channel '${channel.label}' closed.`);
+        chatInput.disabled = true; // Disable input
+        sendButton.disabled = true;
+        // Disable chat input field?
+        // e.g., chatInput.disabled = true; sendButton.disabled = true;
+    };
+
+    channel.onerror = (error) => {
+        console.error(`Data channel '${channel.label}' error:`, error);
+    };
+
+    channel.onmessage = (event) => {
+        console.log(`Message received on '${channel.label}':`, event.data);
+        displayChatMessage(event.data, 'Peer');
+        // Display the message in your chat UI
+        // e.g., displayChatMessage(event.data, 'Peer');
+        // If sending JSON: const messageData = JSON.parse(event.data);
+    };
+}
+
 // main.js (continued) - ICE Candidate Handling
 async function handleCandidate(candidate) {
     if (!peerConnection) {
@@ -202,6 +332,7 @@ async function handleCandidate(candidate) {
 
 callButton.onclick = async () => {
     const targetPeerId = peerIdInput.value;
+
     if (!targetPeerId) {
         alert('Please enter the ID of the peer you want to call.');
         return;
@@ -215,6 +346,14 @@ callButton.onclick = async () => {
 
     // 1. Create PeerConnection
     peerConnection = new RTCPeerConnection(configuration);
+
+    // *** CREATE DATA CHANNEL ***
+    // Create it BEFORE creating the offer.
+    // Label can be anything, options configure reliability (default is reliable/ordered like TCP)
+    dataChannel = peerConnection.createDataChannel("chatMessages", { ordered: true });
+    console.log('Created data channel');
+    // Setup data channel event listeners immediately after creation
+    setupDataChannelEventHandlers(dataChannel);
 
     // 2. Setup Event Handlers (MUST be done before adding tracks/creating offer)
     setupPeerConnectionEventHandlers(); // Call the function we defined earlier
@@ -292,7 +431,7 @@ async function handleOffer(offer, senderId) {
 
     } catch (error) {
         console.error('Error handling offer or creating answer:', error);
-         resetCallState();
+        resetCallState();
     }
 }
 
@@ -309,7 +448,7 @@ async function handleAnswer(answer) {
         // Connection should now start establishing via ICE exchange
     } catch (error) {
         console.error('Error setting remote description (answer):', error);
-         resetCallState();
+        resetCallState();
     }
 }
 
@@ -354,16 +493,11 @@ function closeConnection() {
         peerConnection = null;
         console.log('PeerConnection closed.');
     }
-    // Clear video elements
-    remoteVideo.srcObject = null;
-     // Don't stop local video here unless intended, user might want to see self
-     // If you want to stop camera on hangup:
-     // if (localStream) {
-     //    localStream.getTracks().forEach(track => track.stop());
-     //    localVideo.srcObject = null;
-     //    localStream = null;
-     // }
-     remoteStream = null; // Reset remote stream
+
+    // Clear remote video source and update appearance
+    if (remoteVideo) remoteVideo.srcObject = null;
+    remoteStream = null; // Reset remote stream variable
+    updateRemoteVideoAppearance(); // Update UI to reflect no remote stream
 }
 
 function resetCallState() {
@@ -375,10 +509,97 @@ function resetCallState() {
     hangupButton.disabled = true;
     peerIdInput.disabled = false;
     peerIdInput.value = '';
-    // If camera was stopped on hangup, re-enable start button
-    // startCamButton.disabled = false;
+    if (chatInput) chatInput.disabled = true;
+    if (sendButton) sendButton.disabled = true;
+    if (chatMessagesDiv) chatMessagesDiv.innerHTML = '';
+    
+    // Reset local video appearance (in case it was hidden/styled)
+    if (localVideo) {
+        // Re-enable start button ONLY if localStream was fully stopped/nulled
+        // startCamButton.disabled = !!localStream; // Or handle based on specific hangup logic
+        if (hasLocalVideo) {
+             localVideo.style.backgroundColor = '';
+             localVideo.style.display = '';
+        } else if (localStream) { // Audio-only stream still exists
+             localVideo.style.backgroundColor = '#333';
+             localVideo.style.display = '';
+        } else { // No stream
+             localVideo.style.display = ''; // Make sure it's visible for next start attempt
+             localVideo.style.backgroundColor = '';
+        }
+    }
+
+
+    // Reset remote video appearance
+    if (remoteVideo) {
+        remoteVideo.style.backgroundColor = '';
+        remoteVideo.poster = '';
+    }
+}
+
+function sendMessageViaDataChannel() {
+    const message = chatInput.value;
+    if (!message) return;
+    if (dataChannel && dataChannel.readyState === 'open') {
+        try {
+            dataChannel.send(message);
+            console.log('Sent message:', message);
+            displayChatMessage(message, 'Me'); // Display your own message
+            chatInput.value = ''; // Clear input
+        } catch (error) {
+            console.error('Error sending message:', error);
+        }
+    } else {
+        console.warn('Cannot send message, data channel is not open.');
+    }
+}
+
+// Add event listener for the send button
+sendButton.onclick = sendMessageViaDataChannel;
+
+chatInput.addEventListener('keypress', (event) => {
+    if (event.key === 'Enter') {
+        sendMessageViaDataChannel();
+    }
+});
+
+// Helper to display messages in the UI
+function displayChatMessage(message, sender) {
+    const messageElement = document.createElement('p');
+    messageElement.textContent = `${sender}: ${message}`;
+    chatMessagesDiv.appendChild(messageElement);
+    chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight; // Auto-scroll
+}
+
+// *** Helper function to update remote video appearance ***
+function updateRemoteVideoAppearance() {
+    if (!remoteStream || !remoteVideo) return; // Exit if stream or element is not ready
+
+    const videoTracks = remoteStream.getVideoTracks();
+    const audioTracks = remoteStream.getAudioTracks(); // Check if audio exists too
+
+    if (videoTracks.length > 0) {
+        // We have video from the remote peer
+        console.log("Remote peer is sending video.");
+        remoteVideo.style.backgroundColor = ''; // Default background
+        remoteVideo.poster = ''; // Remove any placeholder
+    } else if (audioTracks.length > 0) {
+        // No video, but we have audio
+        console.log("Remote peer is audio-only.");
+        remoteVideo.style.backgroundColor = '#333'; // Show dark background
+        // Optionally set a placeholder image/icon:
+        // remoteVideo.poster = 'images/audio-only-avatar.png';
+    } else {
+         // No tracks (or stream just cleared) - reset appearance
+         console.log("Remote peer has no media tracks currently.");
+         remoteVideo.style.backgroundColor = '';
+         remoteVideo.poster = '';
+    }
 }
 
 // Initial UI state
 callButton.disabled = true;
 hangupButton.disabled = true;
+chatInput.disabled = true;
+sendButton.disabled = true;
+
