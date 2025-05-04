@@ -508,13 +508,27 @@ function handleHangup() {
     console.log('Hanging up call.');
     // Notify the other peer if connected
     const targetPeerId = peerIdInput.value; // Get ID from input (might be caller or callee)
-    if (targetPeerId && peerConnection && (peerConnection.connectionState === 'connected' || peerConnection.connectionState === 'connecting')) {
+    if (targetPeerId && peerConnection && peerConnection.connectionState !== 'closed' && peerConnection.connectionState !== 'failed') {
         sendMessage({ type: 'hangup', target: targetPeerId });
+    } else {
+        console.log("Skipping hangup signal (no connection or target).");
     }
     resetCallState();
 }
 
 function closeConnection() {
+    if (dataChannel) {
+        console.log("Closing data channel");
+        dataChannel.onopen = null; // Remove listeners first
+        dataChannel.onclose = null;
+        dataChannel.onerror = null;
+        dataChannel.onmessage = null;
+        if (dataChannel.readyState !== 'closed') {
+            dataChannel.close();
+        }
+        dataChannel = null; // Null out the reference
+    }
+
     if (peerConnection) {
         // Stop sending media
         peerConnection.getSenders().forEach(sender => {
@@ -534,15 +548,23 @@ function closeConnection() {
          peerConnection.onicecandidate = null;
          peerConnection.oniceconnectionstatechange = null;
          peerConnection.onconnectionstatechange = null;
+         peerConnection.onsignalingstatechange = null; // Add others if you use them
+         peerConnection.ondatachannel = null;
+         peerConnection.onnegotiationneeded = null;
 
         // Close the connection
-        peerConnection.close();
+        if (peerConnection.signalingState !== 'closed') {
+            peerConnection.close();
+            console.log("peerConnection.close() called.");
+        }
         peerConnection = null;
         console.log('PeerConnection closed.');
     }
 
     // Clear remote video source and update appearance
-    if (remoteVideo) remoteVideo.srcObject = null;
+    if (remoteVideo) {
+        remoteVideo.srcObject = null;
+    }
     remoteStream = null; // Reset remote stream variable
     updateRemoteVideoAppearance(); // Update UI to reflect no remote stream
 }
@@ -553,6 +575,9 @@ function resetCallState() {
 
     // Reset UI elements
     callButton.disabled = !localStream; // Re-enable if camera is on
+    callButton.disabled = true;
+    if (localStream) callButton.disabled = false;
+
     hangupButton.disabled = true;
     peerIdInput.disabled = false;
 
