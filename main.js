@@ -1,807 +1,660 @@
-// Getting elements from the html
+// main.js
+
+// --- HTML Element References ---
 const localVideo = document.getElementById('localVideo');
 const remoteVideo = document.getElementById('remoteVideo');
 const startCamButton = document.getElementById('startCamButton');
 const callButton = document.getElementById('callButton');
 const hangupButton = document.getElementById('hangupButton');
-const peerIdInput = document.getElementById('peerIdInput'); // ID of peer whom you need to talk with.
+const peerIdInput = document.getElementById('peerIdInput'); // Expects target peer's NAME
+const myNameInput = document.getElementById('myNameInput');
+const myUserIdDisplay = document.getElementById('myUserIdDisplay'); // Shows current signaling ID
+const userIdInfoSpan = document.getElementById('userIdInfo');
+const statusMessageEl = document.getElementById('statusMessage');
 const chatInput = document.getElementById('chatInput');
 const sendButton = document.getElementById('sendButton');
 const chatMessagesDiv = document.getElementById('chatMessages');
-const myUserIdDisplay = document.getElementById('myUserIdDisplay');
-const statusMessageEl = document.getElementById('statusMessage');
-const myNameInput = document.getElementById('myNameInput');
-const userIdInfoSpan = document.getElementById('userIdInfo');
 
-// local variables
+// --- Global Variables ---
 let localStream;
 let remoteStream;
 let peerConnection;
-let signalingWebSocket; 
+let signalingWebSocket;
 let dataChannel;
-let hasLocalVideo = false;
 
-// default empty name
-let myName = '';
-// Generating unique ID
-let myId = 'user-' + Math.random().toString(36).substring(2, 9); 
-// Logging id to console.
-console.log('My ID:', myId);
-myUserIdDisplay.textContent =  myId;
-let currentSignalingId =  ''; // id used for current signalling which is default by empty.
+let myName = ''; // User's chosen name
+let myRandomId = 'user-' + Math.random().toString(36).substring(2, 9); // Fallback/internal
+let currentSignalingId = ''; // The ID used for WebSocket identification and signaling
 
-if (myNameInput) {
-    // Update name when the input loses focus (onblur) or Enter is pressed
-    myNameInput.onblur = updateMyName;
-    myNameInput.onkeypress = (event) => {
-        if (event.key === 'Enter') {
-            myNameInput.blur();
-        }
-    };
-}
+let hasLocalVideo = false; // For audio-only fallback
 
-updateUserInfoDisplay();
-
-// Function to get media stream with fallback
-async function startMedia() {
-    let stream = null;
-    let constraintsVideoAudio = { video: true, audio: true };
-    let constraintsAudioOnly = { audio: true };
-    hasLocalVideo = false; // Reset flag
-
-    try {
-        // 1. Try getting video and audio
-        console.log("Attempting to get video and audio stream...");
-        stream = await navigator.mediaDevices.getUserMedia(constraintsVideoAudio);
-        hasLocalVideo = true; // Success! We have video.
-        console.log("Acquired video and audio stream.");
-        localVideo.style.display = ''; // Ensure video element is visible
-        localVideo.style.backgroundColor = ''; // Reset background
-
-    } catch (err) {
-        console.warn("getUserMedia(video+audio) failed:", err.name, err.message);
-
-        // 2. If failed, try audio only (Common errors: NotFoundError, NotAllowedError for video)
-        // Check if the error is likely related to video device/permission issues
-        if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError" ||
-            err.name === "NotAllowedError" || err.name === "NotReadableError" ||
-            err.message.toLowerCase().includes("video"))
-        {
-            console.log("Attempting to get audio-only stream...");
-            try {
-                stream = await navigator.mediaDevices.getUserMedia(constraintsAudioOnly);
-                hasLocalVideo = false; // Indicate we only have audio
-                console.log("Acquired audio-only stream.");
-                // Optionally hide local video element or show placeholder
-                // localVideo.style.display = 'none'; // Option 1: Hide
-                localVideo.style.backgroundColor = '#333'; // Option 2: Show dark background
-                localVideo.poster = ''; // Clear any previous poster
-                localVideo.style.display = ''; // Make sure it's visible if using background color
-
-
-            } catch (audioErr) {
-                console.error("getUserMedia(audio-only) also failed:", audioErr.name, audioErr.message);
-                stream = null; // Failed to get anything
-                alert(`Could not access microphone: ${audioErr.message}. Please check permissions.`);
-            }
-        } else {
-            // Different error (e.g., user denied everything, hardware issue)
-            stream = null;
-            alert(`Could not access camera/microphone: ${err.message}. Please check permissions/devices.`);
-        }
-    }
-
-    if (stream) {
-        const audioTrack = stream.getAudioTracks();
-        if (audioTrack.length > 0) {
-            console.log("CALLER: Successfully got audio track:", audioTrack[0].id, "Enabled:", audioTrack[0].enabled);
-        } else {
-            console.error("CALLER: !!! FAILED to get audio track !!!");
-        }
-    }
-
-    return stream; // Return the stream (or null if failed)
-}
-
-
-startCamButton.onclick = async () => {
-    console.log("Start Camera button clicked");
-    localStream = await startMedia(); // Use the new function
-    if (localStream) {
-        console.log("Local stream acquired.");
-        localVideo.srcObject = localStream;
-        localVideo.muted = true; // Crucial for preventing echo
-
-        startCamButton.disabled = true;
-        callButton.disabled = false; // Enable calling now
-        hangupButton.disabled = true; // Ensure hangup is disabled until call starts
-
-        // Optional: Update UI based on hasLocalVideo
-        if (!hasLocalVideo) {
-            console.log("Proceeding with audio only locally.");
-            // UI is partially handled in startMedia (e.g., background color)
-        }
-
-    } else {
-        console.log("Failed to acquire any local stream.");
-        // Reset button states if failed
-        startCamButton.disabled = false;
-        callButton.disabled = true;
-        // UI alerts already shown in startMedia
-    }
-};
-
-// main.js (continued)
-function connectWebSocket() {
-    // Replace with your actual server IP/domain, replaced with local ip assigned to my system from router.
-    // for local running siganling server
-    // signalingWebSocket = new WebSocket('ws://localhost:8080');
-
-    // for remote running signal server
-    const signalServerUrl = 'wss://signal-server-first-version.azurewebsites.net'; // signal server url from azure.
-    console.log(`Connecting to signaling server at ${signalServerUrl}`);
-    signalingWebSocket = new WebSocket(signalServerUrl);
-
-    signalingWebSocket.onopen = () => {
-        console.log('WebSocket connected');
-        // Ensure currentSignalingId is set before identifying
-        if (!currentSignalingId) {
-            updateCurrentSignalingId(); // Initialize if somehow missed
-        }
-        // Identify this client to the server
-        sendMessage({ type: 'identify', id: currentSignalingId });
-    };
-
-    signalingWebSocket.onmessage = async (event) => {
-        const message = JSON.parse(event.data);
-        console.log('Received message:', message);
-
-        switch (message.type) {
-            case 'offer':
-                // Received an offer from a peer
-                peerIdInput.value = message.sender;
-                await handleOffer(message.offer, message.sender);
-                break;
-            case 'answer':
-                // Received an answer from a peer
-                await handleAnswer(message.answer);
-                break;
-            case 'candidate':
-                // Received an ICE candidate from a peer (message.sender is their name)
-                // We need to ensure candidates are added only if they are for the current active peer
-                if (peerIdInput.value === message.sender || !peerIdInput.value) { // Crude check, better with active call state
-                    await handleCandidate(message.candidate);
-                } else {
-                    console.warn(`Received candidate from unexpected sender ${message.sender}, current target is ${peerIdInput.value}`);
-                }
-                break;
-            case 'hangup':
-                if (peerIdInput.value === message.sender) { // Ensure hangup is from current peer
-                    updateStatus(`${message.sender} disconnected.`, 'info');
-                    handleHangupLocally(); // New function to avoid re-sending hangup
-                }
-                break;
-            case 'error':
-                console.error('Received error from signaling server:', message.message);
-                // Server sent an error (e.g., user not found)
-                // alert(message.message);
-                updateStatus(message.message, 'error');
-                if (!hangupButton.disabled) {
-                    resetCallState(); // Reset UI and connection state
-                }
-                break;
-            case 'identified':
-                console.log(`Server confirmed identification as ${message.id}`);
-                // If message.id is different from currentSignalingId, it might indicate an issue or name clash
-                // For simplicity, we assume the server confirms the ID we sent.
-                currentSignalingId = message.id; // Update our ID based on server confirmation
-                updateUserInfoDisplay();
-                break;
-            default:
-                console.log('Unknown message type:', message.type);
-        }
-    };
-
-    signalingWebSocket.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        alert('WebSocket connection error. Please refresh and try again.');
-        resetCallState();
-    };
-
-    signalingWebSocket.onclose = () => {
-        console.log('WebSocket closed');
-        // Optionally try to reconnect or just reset state
-         // resetCallState(); // Be careful not to interfere with intentional hangup
-    };
-}
-
-// Call this function early on, perhaps after getting the ID
-updateCurrentSignalingId();
-connectWebSocket();
-
-// RTC peer connections
+// --- WebRTC Configuration ---
 const configuration = {
     iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' }, // Google's public STUN server
+        { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        // Add more STUN servers if needed
+        // Add TURN servers here if needed for NAT traversal
         // {
         //   urls: 'turn:your-turn-server.com:3478',
         //   username: 'user',
         //   credential: 'password'
-        // } // Add TURN server if needed for difficult NATs
+        // }
     ]
 };
 
-function addLocalTracks() {
-    if (localStream && peerConnection) {
-        localStream.getTracks().forEach(track => {
-            peerConnection.addTrack(track, localStream);
-            console.log('Added local track:', track.kind);
-        });
+// --- Initialization ---
+updateCurrentSignalingId(); // Set initial signaling ID (will use randomId)
+updateUserInfoDisplay();
+connectWebSocket();
+
+// --- Event Listeners for User Input ---
+if (myNameInput) {
+    myNameInput.onblur = handleNameChange;
+    myNameInput.onkeypress = (event) => {
+        if (event.key === 'Enter') myNameInput.blur();
+    };
+}
+
+startCamButton.onclick = async () => {
+    console.log("[startCamButton] Clicked");
+    localStream = await startMedia();
+
+    if (localStream) {
+        console.log("[startCamButton] Local stream acquired.");
+        localVideo.srcObject = localStream;
+        localVideo.muted = true;
+
+        startCamButton.disabled = true;
+        callButton.disabled = false;
+        hangupButton.disabled = true; // Ensure hangup is initially disabled
+
+        if (!hasLocalVideo) console.log("[startCamButton] Proceeding with audio only locally.");
     } else {
-         console.error("Cannot add tracks: localStream or peerConnection missing.");
-    }
-}
-
-function setupPeerConnectionEventHandlers() {
-    if (!peerConnection) return;
-
-    remoteVideo.style.backgroundColor = '';
-    remoteVideo.poster = '';
-
-    // Listen for incoming data channel.
-    peerConnection.ondatachannel = (event) => {
-        console.log('Incoming data channel detected!');
-        dataChannel = event.channel; // Get the channel created by the other peer
-        console.log(`Received data channel: '${dataChannel.label}'`);
-        // Setup event handlers for the *received* channel
-        setupDataChannelEventHandlers(dataChannel);
-    };
-
-    peerConnection.ontrack = (event) => {
-        console.log('Remote track received:', event.track.kind, ' ID:', event.track.id);
-        // Create a new stream if it doesn't exist
-        if (!remoteStream) {
-            remoteStream = new MediaStream();
-            remoteVideo.srcObject = remoteStream;
-
-            // Add listeners to detect when tracks are actually added/removed
-            // Useful for handling dynamic changes or initial state
-            remoteStream.onaddtrack = (e) => {
-                console.log("Track added to remote stream:", e.track.kind);
-                updateRemoteVideoAppearance();
-            };
-            remoteStream.onremovetrack = (e) => {
-                console.log("Track removed from remote stream:", e.track.kind);
-                updateRemoteVideoAppearance();
-            };
-        }
-
-        if (!remoteStream.getTrackById(event.track.id)) {
-            remoteStream.addTrack(event.track, remoteStream);
-        }
-
-        // Ensure remote video isn't muted on Callee's side
-        remoteVideo.muted = false;
-        
-        console.log(`CALLEE: Tracks currently in remoteStream: ${remoteStream.getTracks().map(t => `${t.kind}(${t.id})`).join(', ')}`);
-        updateRemoteVideoAppearance();
-    };
-
-    peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-            console.log('Generated ICE candidate:', event.candidate);
-            // Send the candidate to the remote peer via signaling
-            sendMessage({
-                type: 'candidate',
-                target: peerIdInput.value, // Target the peer we are calling/called by
-                candidate: event.candidate
-            });
-        } else {
-            console.log('All ICE candidates have been sent');
-        }
-    };
-
-    peerConnection.oniceconnectionstatechange = () => {
-        console.log('ICE connection state change:', peerConnection.iceConnectionState);
-        // Handle states like 'connected', 'disconnected', 'failed', 'closed'
-        if (peerConnection.iceConnectionState === 'failed' ||
-            peerConnection.iceConnectionState === 'disconnected' ||
-            peerConnection.iceConnectionState === 'closed') {
-            // Consider the call potentially dropped, maybe cleanup
-            // Be careful with 'disconnected' as it might recover
-        }
-    };
-
-    peerConnection.onconnectionstatechange = () => {
-       console.log('Connection state change:', peerConnection.connectionState);
-       if (peerConnection.connectionState === 'connected') {
-           console.log('Peers connected!');
-           // Update UI (e.g., show connected status)
-       }
-        if (peerConnection.connectionState === 'failed') {
-           console.error('Peer connection failed.');
-           handleHangup(); // Or attempt restart
-        }
-    }
-}
-
-// Setup Data Channel Handlers
-function setupDataChannelEventHandlers(channel) {
-    channel.onopen = () => {
-        console.log(`Data channel '${channel.label}' opened!`);
-        chatInput.disabled = false; // Enable input
-        sendButton.disabled = false;
-        updateStatus('Chat connected!', 'success');
-        // Now you can reliably send messages. Enable chat input field?
-        // e.g., chatInput.disabled = false; sendButton.disabled = false;
-    };
-
-    channel.onclose = () => {
-        console.log(`Data channel '${channel.label}' closed.`);
-        chatInput.disabled = true; // Disable input
-        sendButton.disabled = true;
-        updateStatus('Chat disconnected.', 'info');
-        // Disable chat input field?
-        // e.g., chatInput.disabled = true; sendButton.disabled = true;
-    };
-
-    channel.onerror = (error) => {
-        console.error(`Data channel '${channel.label}' error:`, error);
-    };
-
-    channel.onmessage = (event) => {
-        try {
-            const messageData = JSON.parse(event.data);
-            console.log(`Parsed message received on '${channel.label}':`, messageData);
-
-            // Check if it has the expected structure
-            if (messageData && messageData.senderName && typeof messageData.text !== 'undefined') {
-                // Display using the sender's name from the message data
-                displayChatMessage(messageData.text, messageData.senderName);
-            } else {
-                console.warn("Received data channel message in unexpected format:", event.data);
-                // Fallback: display raw data if structure is wrong
-                displayChatMessage(`Raw: ${event.data}`, 'Unknown Peer');
-            }
-        } catch(error) {
-            console.error("Failed to parse data channel message or invalid JSON:", event.data, error);
-             // Display raw data if parsing fails
-             displayChatMessage(`Raw: ${event.data}`, 'Unknown Peer (Error)');
-        }
-    };
-}
-
-// main.js (continued) - ICE Candidate Handling
-async function handleCandidate(candidate) {
-    if (!peerConnection) {
-        console.error('PeerConnection not initialized yet.');
-        // Maybe queue candidates if offer/answer hasn't happened? Risky.
-        return;
-    }
-    if (!candidate) {
-         console.warn("Received empty candidate");
-         return;
-    }
-    try {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-        console.log('Added received ICE candidate');
-    } catch (error) {
-        console.error('Error adding received ICE candidate', error);
-    }
-}
-
-// main.js (Offer/Answer logic)
-
-callButton.onclick = async () => {
-    const targetPeerName = peerIdInput.value;
-    if (!targetPeerName) {
-        updateStatus('Please enter the name of the peer you want to call.', 'error');
-        return;
-    }
-
-    if (!currentSignalingId) { // Ensure our own signaling ID is set
-        updateStatus('Please set your name before calling.', 'error');
-        handleNameChange(); // Attempt to set it from input
-        if (!currentSignalingId) return; // Still no ID, abort
-    }
-
-    if (!localStream) {
-        updateStatus("Please start your camera first.", 'error');
-        return;
-    }
-
-    // Check if already trying to call or connected.
-    // A simple check is to see if hangupButton is enabled, implying a call is active/attempting
-    if (!hangupButton.disabled) {
-        console.warn("Call attempt already in progress or connected.");
-        updateStatus("Call already active");
-        return;
-   }
-
-    console.log(`Initiating call to ${targetPeerName}`);
-    updateStatus(`Calling ${targetPeerName}...`, 'info');
-
-    // *** Disable Call button immediately ***
-    callButton.disabled = true;
-    peerIdInput.disabled = true; // Disable input too
-    hangupButton.disabled = false; // Enable Hang Up (to cancel attempt)
-
-    // Create PeerConnection (assuming it's not already created)
-    if (peerConnection) { // Clean up previous attempt if necessary
-        console.warn("Cleaning up previous peer connection before new call");
-        closeConnection();
-    }
-
-    // 1. Create PeerConnection
-    peerConnection = new RTCPeerConnection(configuration);
-
-    // Creating data channel
-    // Create it BEFORE creating the offer.
-    // Label can be anything, options configure reliability (default is reliable/ordered like TCP)
-    dataChannel = peerConnection.createDataChannel("chatMessages", { ordered: true });
-    console.log('Created data channel');
-    // Setup data channel event listeners immediately after creation
-    setupDataChannelEventHandlers(dataChannel);
-
-    // 2. Setup Event Handlers (MUST be done before adding tracks/creating offer)
-    setupPeerConnectionEventHandlers(); // Call the function we defined earlier
-
-    // 3. Add Local Tracks
-    addLocalTracks();
-
-    try {
-        // 4. Create Offer
-        const offer = await peerConnection.createOffer();
-        console.log('Created offer');
-
-        // 5. Set Local Description
-        await peerConnection.setLocalDescription(offer);
-        console.log('Set local description');
-
-        // 6. Send Offer via Signaling
-        sendMessage({ type: 'offer', target: targetPeerName, offer: offer });
-
-        // 7. Update UI
+        console.log("[startCamButton] Failed to acquire any local stream.");
+        updateStatus("Could not start camera/microphone.", "error");
+        startCamButton.disabled = false;
         callButton.disabled = true;
-        hangupButton.disabled = false;
-        peerIdInput.disabled = true; // Don't allow changing target mid-call
-
-    } catch (error) {
-        console.error('Error creating offer or setting local description:', error);
-        updateStatus(`Error starting call: ${error.message}`, 'error');
-        resetCallState(); // Clean up if offer fails
     }
 };
 
-async function handleOffer(offer, senderId) {
-    if (peerConnection) {
-        console.warn('Existing peer connection detected when receiving offer. Resetting.');
-        // Potentially handle this more gracefully (e.g., notify user)
-         closeConnection(); // Close existing before creating new
+callButton.onclick = async () => {
+    const targetPeerName = peerIdInput.value.trim();
+    console.log(`[callButton.onclick] Target peer name from input: '${targetPeerName}'`);
+
+    if (!targetPeerName) {
+        updateStatus('Please enter the name of the peer to call.', 'error');
+        return;
     }
     if (!localStream) {
-         alert("Cannot accept call without starting camera first.");
-         // Maybe send a 'busy' or 'unavailable' message back?
-         return;
+        updateStatus("Please start your camera/microphone first.", "error");
+        return;
     }
-
-    console.log(`Received offer from ${senderId}`);
-    peerIdInput.value = senderId; // Store caller ID to send answer back
-
-    // 1. Create PeerConnection
-    peerConnection = new RTCPeerConnection(configuration);
-
-    // 2. Setup Event Handlers
-    setupPeerConnectionEventHandlers();
-
-    // 3. Add Local Tracks (Callee also needs to send their stream)
-    addLocalTracks();
-
-    if (!currentSignalingId) { updateCurrentSignalingId(); } // Ensure our ID is set
-
-    try {
-        // 4. Set Remote Description
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-        console.log('Set remote description');
-
-        // 5. Create Answer
-        const answer = await peerConnection.createAnswer();
-        console.log('Created answer');
-
-        // 6. Set Local Description
-        await peerConnection.setLocalDescription(answer);
-        console.log('Set local description');
-
-        // 7. Send Answer via Signaling
-        sendMessage({ type: 'answer', target: senderId, answer: answer });
-
-        // Update UI
-        updateStatus(`Call connected with ${senderId}`, 'success');
-        peerIdInput.value = senderId;
-        callButton.disabled = true; // Cannot initiate another call
-        hangupButton.disabled = false;
-        peerIdInput.disabled = true;
-
-    } catch (error) {
-        console.error('Error handling offer or creating answer:', error);
-        resetCallState();
-    }
-}
-
-// main.js (Hangup Logic)
-hangupButton.onclick = handleHangup;
-
-function handleHangup() {
-    console.log('User clicked hangup button.');
-    // Notify the other peer if connected
-    const targetPeerId = peerIdInput.value; // Get ID from input (might be caller or callee)
-    if (targetPeerId && peerConnection && peerConnection.connectionState !== 'closed' && peerConnection.connectionState !== 'failed') {
-        sendMessage({ type: 'hangup', target: targetPeerId });
-    } else {
-        console.log("Skipping hangup signal (no connection or target).");
-    }
-    resetCallState();
-}
-
-function closeConnection() {
-    if (dataChannel) {
-        console.log("Closing data channel");
-        dataChannel.onopen = null; // Remove listeners first
-        dataChannel.onclose = null;
-        dataChannel.onerror = null;
-        dataChannel.onmessage = null;
-        if (dataChannel.readyState !== 'closed') {
-            dataChannel.close();
+    if (!currentSignalingId) {
+        updateStatus('Please set your name/ID before calling.', 'error');
+        handleNameChange();
+        if (!currentSignalingId) {
+            console.error("[callButton.onclick] No signaling ID set. Aborting call.");
+            return;
         }
-        dataChannel = null; // Null out the reference
     }
+    if (!hangupButton.disabled) { // Simple check: if hangup is enabled, a call is active/attempting
+        console.warn("[callButton.onclick] Call attempt already in progress or connected.");
+        updateStatus("Call already active or attempting.", "info");
+        return;
+    }
+
+    console.log(`[callButton.onclick] Initiating call to ${targetPeerName} (from ${currentSignalingId})`);
+    updateStatus(`Calling ${targetPeerName}...`, 'info');
+
+    callButton.disabled = true;
+    peerIdInput.disabled = true;
+    hangupButton.disabled = false;
 
     if (peerConnection) {
-        // Stop sending media
-        peerConnection.getSenders().forEach(sender => {
-            if (sender.track) {
-                sender.track.stop();
-            }
-        });
-         // Stop receiving media (redundant if also stopping tracks)
-        peerConnection.getReceivers().forEach(receiver => {
-            if (receiver.track) {
-                receiver.track.stop();
-            }
-        });
-
-        // Clean up event listeners to prevent memory leaks
-         peerConnection.ontrack = null;
-         peerConnection.onicecandidate = null;
-         peerConnection.oniceconnectionstatechange = null;
-         peerConnection.onconnectionstatechange = null;
-         peerConnection.onsignalingstatechange = null; // Add others if you use them
-         peerConnection.ondatachannel = null;
-         peerConnection.onnegotiationneeded = null;
-
-        // Close the connection
-        if (peerConnection.signalingState !== 'closed') {
-            peerConnection.close();
-            console.log("peerConnection.close() called.");
-        }
-        peerConnection = null;
-        console.log('PeerConnection closed.');
+        console.warn("[callButton.onclick] Cleaning up previous peer connection before new call");
+        closeConnection(); // Ensure clean state from any prior attempt
     }
+    peerConnection = new RTCPeerConnection(configuration);
+    setupPeerConnectionEventHandlers();
+    addLocalTracks();
 
-    // Clear remote video source and update appearance
-    if (remoteVideo) {
-        remoteVideo.srcObject = null;
+    // Create Data Channel
+    dataChannel = peerConnection.createDataChannel("chatMessages", { ordered: true });
+    console.log('[callButton.onclick] Created data channel "chatMessages"');
+    setupDataChannelEventHandlers(dataChannel);
+
+    try {
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        console.log(`[callButton.onclick] Sending offer to target: '${targetPeerName}'`);
+        sendMessage({ type: 'offer', target: targetPeerName, offer: offer });
+    } catch (error) {
+        console.error('[callButton.onclick] Error creating offer or setting local description:', error);
+        updateStatus(`Error starting call: ${error.message}`, 'error');
+        resetCallState();
     }
-    remoteStream = null; // Reset remote stream variable
-    updateRemoteVideoAppearance(); // Update UI to reflect no remote stream
+};
+
+hangupButton.onclick = handleUserHangup;
+
+if (sendButton && chatInput) {
+    sendButton.onclick = sendMessageViaDataChannel;
+    chatInput.addEventListener('keypress', (event) => {
+        if (event.key === 'Enter') sendMessageViaDataChannel();
+    });
 }
 
-function resetCallState() {
-    console.log("Resetting Call State");
-    closeConnection(); // Ensure connection is closed first
 
-    // Reset UI elements
-    callButton.disabled = !localStream; // Re-enable if camera is on
-    callButton.disabled = true;
-    if (localStream) callButton.disabled = false;
-
-    hangupButton.disabled = true;
-    peerIdInput.disabled = false;
-
-    updateUserInfoDisplay();
-    clearStatus();
-
-    if (chatInput) chatInput.disabled = true;
-    if (sendButton) sendButton.disabled = true;
-    if (chatMessagesDiv) chatMessagesDiv.innerHTML = '';
-    
-    // Reset local video appearance (in case it was hidden/styled)
-    if (localVideo) {
-        // Re-enable start button ONLY if localStream was fully stopped/nulled
-        // startCamButton.disabled = !!localStream; // Or handle based on specific hangup logic
-        if (hasLocalVideo) {
-             localVideo.style.backgroundColor = '';
-             localVideo.style.display = '';
-        } else if (localStream) { // Audio-only stream still exists
-             localVideo.style.backgroundColor = '#333';
-             localVideo.style.display = '';
-        } else { // No stream
-             localVideo.style.display = ''; // Make sure it's visible for next start attempt
-             localVideo.style.backgroundColor = '';
-        }
-    }
-
-
-    // Reset remote video appearance
-    if (remoteVideo) {
-        remoteVideo.srcObject = null;
-        remoteVideo.style.backgroundColor = '';
-        remoteVideo.poster = '';
-    }
-}
-
-function sendMessageViaDataChannel() {
-    const message = chatInput.value;
-    if (!message) return;
-    if (dataChannel && dataChannel.readyState === 'open') {
-        // Create a JSON object with sender name and message text
-        const messageData = {
-            senderName: getDisplayName(), // Use helper to get current name or ID
-            text: message
-        };
-
-        const jsonMessage = JSON.stringify(messageData);
-
-        try {
-            dataChannel.send(jsonMessage);
-            console.log('Sent message:', messageData);
-            displayChatMessage(message, getDisplayName()); // Display your own message
-            chatInput.value = ''; // Clear input
-        } catch (error) {
-            console.error('Error sending message:', error);
-            updateStatus('Error sending message.', 'error');
-        }
-    } else {
-        console.warn('Cannot send message, channel for chat is not open.');
-        updateStatus('Chat channel not open.', 'error');
-    }
-}
-
-// Add event listener for the send button
-sendButton.onclick = sendMessageViaDataChannel;
-chatInput.addEventListener('keypress', (event) => {
-    if (event.key === 'Enter') {
-        sendMessageViaDataChannel();
-    }
-});
-
-// Initial UI state
-callButton.disabled = true;
-hangupButton.disabled = true;
-chatInput.disabled = true;
-sendButton.disabled = true;
-clearStatus();
-
-
-// Helper functions.
-function handleHangupLocally() {
-    console.log("Handling hangup initiated by remote peer or local error.");
-    // Don't send another 'hangup' message here
-    resetCallState();
-}
-
+// --- Helper Functions ---
 function handleNameChange() {
     if (myNameInput) {
         const newName = myNameInput.value.trim();
-        if (newName && newName !== myName) { // Only update if name is not empty and has changed
+        console.log(`[handleNameChange] Input value: '${newName}', Current myName: '${myName}'`);
+        if (newName && newName !== myName) {
             myName = newName;
-            console.log(`My name set to: ${myName}`);
-            updateCurrentSignalingId(); // Crucial: update the ID used for signaling
-            updateUserInfoDisplay();
-            // Optional: If already connected to WebSocket, re-identify if desired,
-            // but for simplicity, we'll assume name is set before serious signaling.
-            // If changing name mid-session is a feature, the server would need to handle ID changes.
-        } else if (!newName && myName) { // Name cleared
-            myName = '';
+            console.log(`[handleNameChange] My name set to: ${myName}`);
             updateCurrentSignalingId();
             updateUserInfoDisplay();
+        } else if (!newName && myName) { // Name cleared
+            myName = '';
+            console.log(`[handleNameChange] My name cleared.`);
+            updateCurrentSignalingId();
+            updateUserInfoDisplay();
+        } else if (newName === myName) {
+            console.log(`[handleNameChange] Name unchanged: '${myName}'`);
         }
         myNameInput.value = myName; // Reflect trimmed name back to input
     }
 }
 
 function updateCurrentSignalingId() {
-    // Use the provided name if available, otherwise fall back to the random ID
-    currentSignalingId = myName || myId;
-    console.log(`Current Signaling ID set to: ${currentSignalingId}`);
-    // If WebSocket is connected, you might want to send an 'identify' message with the new ID
-    // This depends on your server logic for handling re-identification.
-    // For this example, we'll assume the ID is set before call initiation.
-    if (signalingWebSocket && signalingWebSocket.readyState === WebSocket.OPEN) {
+    const oldSignalingId = currentSignalingId;
+    currentSignalingId = myName || myRandomId; // Use name if set, else randomId
+    console.log(`[updateCurrentSignalingId] Set to: '${currentSignalingId}' (was: '${oldSignalingId}', myName: '${myName}')`);
+    // If WebSocket is connected and ID changed, re-identify
+    if (signalingWebSocket && signalingWebSocket.readyState === WebSocket.OPEN && oldSignalingId !== currentSignalingId) {
         sendMessage({ type: 'identify', id: currentSignalingId });
-        console.log(`Re-identified with server as: ${currentSignalingId}`);
+        console.log(`[updateCurrentSignalingId] Re-identified with server as: ${currentSignalingId}`);
     }
 }
 
-// Helper to display messages in the UI
-function displayChatMessage(messageText, senderName) {
-    const messageElement = document.createElement('p');
-    // Determine if the message is from "Me" or the peer for potential styling
-    const ownNameOrId = getDisplayName(); // Get my current name/id
-    let displaySender = senderName;
-    let messageClass = 'peer-message'; // Default class
-
-    if (senderName === ownNameOrId) {
-        // It's my own message (or appears to be)
-        // Optional: Display "Me" instead of own name/ID for clarity
-        displaySender = "Me";
-        messageClass = 'my-message';
-    }
-    messageElement.innerHTML = `<strong>${displaySender}:</strong> ${messageText}`; // Use innerHTML to allow bold tag
-    messageElement.classList.add(messageClass); // Add class for styling
-
-    chatMessagesDiv.appendChild(messageElement);
-    chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
+function updateUserInfoDisplay() {
+    const nameToShow = myName || 'Guest';
+    userIdInfoSpan.innerHTML = `You: <strong>${nameToShow}</strong> (Signaling as: <span id="myUserIdDisplay">${currentSignalingId || myRandomId}</span>)`;
 }
 
-// Helper function to update remote video appearance
-function updateRemoteVideoAppearance() {
-    if (!remoteStream || !remoteVideo) return; // Exit if stream or element is not ready
+function getDisplayNameForChat() {
+    return myName || 'Guest';
+}
 
-    const videoTracks = remoteStream.getVideoTracks();
-    const audioTracks = remoteStream.getAudioTracks(); // Check if audio exists too
+async function startMedia() {
+    let stream = null;
+    const constraintsVideoAudio = { video: true, audio: true };
+    const constraintsAudioOnly = { audio: true };
+    hasLocalVideo = false;
 
-    if (videoTracks.length > 0) {
-        // We have video from the remote peer
-        console.log("Remote peer is sending video.");
-        remoteVideo.style.backgroundColor = ''; // Default background
-        remoteVideo.poster = ''; // Remove any placeholder
-    } else if (audioTracks.length > 0) {
-        // No video, but we have audio
-        console.log("Remote peer is audio-only.");
-        remoteVideo.style.backgroundColor = '#333'; // Show dark background
-        // Optionally set a placeholder image/icon:
-        // remoteVideo.poster = 'images/audio-only-avatar.png';
+    try {
+        console.log("[startMedia] Attempting video and audio...");
+        stream = await navigator.mediaDevices.getUserMedia(constraintsVideoAudio);
+        hasLocalVideo = true;
+        console.log("[startMedia] Acquired video and audio stream.");
+        if (localVideo) {
+            localVideo.style.display = '';
+            localVideo.style.backgroundColor = '';
+        }
+    } catch (err) {
+        console.warn("[startMedia] getUserMedia(video+audio) failed:", err.name, err.message);
+        if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError" || err.name === "NotAllowedError" || err.name === "NotReadableError" || err.message.toLowerCase().includes("video")) {
+            console.log("[startMedia] Attempting audio-only stream...");
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(constraintsAudioOnly);
+                hasLocalVideo = false;
+                console.log("[startMedia] Acquired audio-only stream.");
+                if (localVideo) {
+                    localVideo.style.backgroundColor = '#333'; // Dark background for audio-only
+                    localVideo.poster = '';
+                    localVideo.style.display = '';
+                }
+            } catch (audioErr) {
+                console.error("[startMedia] getUserMedia(audio-only) also failed:", audioErr.name, audioErr.message);
+                updateStatus(`Could not access microphone: ${audioErr.message}.`, "error");
+                stream = null;
+            }
+        } else {
+            updateStatus(`Could not access camera/microphone: ${err.message}.`, "error");
+            stream = null;
+        }
+    }
+    return stream;
+}
+
+// --- WebSocket Signaling ---
+function connectWebSocket() {
+    // !!! REPLACE WITH YOUR AZURE URL !!!
+    const signalServerUrl = 'wss://signal-server-first-version.azurewebsites.net';
+    console.log(`[connectWebSocket] Connecting to signaling server at ${signalServerUrl}`);
+    signalingWebSocket = new WebSocket(signalServerUrl);
+
+    signalingWebSocket.onopen = () => {
+        console.log('[connectWebSocket] WebSocket connected');
+        if (!currentSignalingId) updateCurrentSignalingId(); // Ensure ID is set
+        console.log(`[connectWebSocket] Identifying with server as: '${currentSignalingId}'`);
+        sendMessage({ type: 'identify', id: currentSignalingId });
+    };
+
+    signalingWebSocket.onmessage = async (event) => {
+        const message = JSON.parse(event.data);
+        console.log('[WebSocket onmessage] Received message:', message);
+
+        switch (message.type) {
+            case 'offer':
+                console.log(`[WebSocket onmessage] Offer received. Sender: '${message.sender}'`);
+                peerIdInput.value = message.sender; // Store sender's name for answer
+                await handleOffer(message.offer, message.sender);
+                break;
+            case 'answer':
+                console.log(`[WebSocket onmessage] Answer received. Sender: '${message.sender}'`);
+                await handleAnswer(message.answer);
+                break;
+            case 'candidate':
+                console.log(`[WebSocket onmessage] Candidate received. Sender: '${message.sender}'`);
+                 // Only add candidate if it's from the peer we are connected/connecting to
+                if (peerIdInput.value === message.sender && peerConnection) {
+                     await handleCandidate(message.candidate);
+                } else {
+                     console.warn(`[WebSocket onmessage] Received candidate from unexpected sender ${message.sender} or no peerConnection.`);
+                }
+                break;
+            case 'hangup':
+                console.log(`[WebSocket onmessage] Hangup received from: '${message.sender}'`);
+                if (peerIdInput.value === message.sender) { // Ensure hangup is from current peer
+                    updateStatus(`${message.sender} disconnected.`, 'info');
+                    handleRemoteHangup();
+                }
+                break;
+            case 'error':
+                console.error('[WebSocket onmessage] Received error from signaling server:', message.message);
+                updateStatus(message.message, 'error');
+                // Only reset if we were in an active call attempt
+                if (!hangupButton.disabled) {
+                    resetCallState();
+                }
+                break;
+            case 'identified':
+                console.log(`[WebSocket onmessage] Server confirmed identification as ${message.id}`);
+                if (message.id !== currentSignalingId) {
+                    console.warn(`[WebSocket onmessage] Server identified us as '${message.id}', but client thought it was '${currentSignalingId}'. Updating.`);
+                    currentSignalingId = message.id; // Align with server
+                    if (!myName && message.id.startsWith('user-')) myRandomId = message.id; // Update random if server changed it
+                    else if (myName && message.id !== myName) console.warn("Server changed our chosen name during identification!");
+                    updateUserInfoDisplay();
+                }
+                break;
+            default:
+                console.log('[WebSocket onmessage] Unknown message type:', message.type);
+        }
+    };
+
+    signalingWebSocket.onerror = (error) => {
+        console.error('[connectWebSocket] WebSocket error:', error);
+        updateStatus('WebSocket connection error. Please check server or refresh.', 'error');
+        // Consider if resetCallState() should be called here, depends on desired behavior
+    };
+
+    signalingWebSocket.onclose = (event) => {
+        console.log(`[connectWebSocket] WebSocket closed: Code=${event.code}, Reason=${event.reason}`);
+        updateStatus('Disconnected from signaling server.', 'info');
+        // Avoid resetting call state if it was a clean hangup.
+        // If call was active and socket closes unexpectedly, then reset.
+        // if (!hangupButton.disabled) { // A call was active or being attempted
+        //    resetCallState();
+        // }
+    };
+}
+
+function sendMessage(message) {
+    if (signalingWebSocket && signalingWebSocket.readyState === WebSocket.OPEN) {
+        signalingWebSocket.send(JSON.stringify(message));
     } else {
-         // No tracks (or stream just cleared) - reset appearance
-         console.log("Remote peer has no media tracks currently.");
-         remoteVideo.style.backgroundColor = '';
-         remoteVideo.poster = '';
+        console.error('[sendMessage] WebSocket is not connected. Message not sent:', message);
+        updateStatus('Cannot send message: Not connected to server.', 'error');
+    }
+}
+
+// --- WebRTC Core Logic ---
+function setupPeerConnectionEventHandlers() {
+    if (!peerConnection) return;
+    console.log("[setupPeerConnectionEventHandlers] Setting up handlers for new PeerConnection.");
+
+    remoteVideo.style.backgroundColor = ''; // Reset remote video appearance
+    remoteVideo.poster = '';
+
+    peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+            console.log("[PeerConnection onicecandidate] Generated ICE candidate:", event.candidate.candidate.substring(0, 30) + "...");
+            sendMessage({
+                type: 'candidate',
+                target: peerIdInput.value, // Target the current peer we are in call with
+                candidate: event.candidate
+            });
+        } else {
+            console.log('[PeerConnection onicecandidate] All ICE candidates have been sent.');
+        }
+    };
+
+    peerConnection.ontrack = (event) => {
+        console.log(`[PeerConnection ontrack] Remote track received: Kind=${event.track.kind}, ID=${event.track.id}`);
+        if (!remoteStream) {
+            remoteStream = new MediaStream();
+            remoteVideo.srcObject = remoteStream;
+            remoteStream.onaddtrack = (e) => {
+                console.log(`[PeerConnection ontrack] Track ADDED to remoteStream: Kind=${e.track.kind}`);
+                updateRemoteVideoAppearance();
+            };
+            remoteStream.onremovetrack = (e) => {
+                 console.log(`[PeerConnection ontrack] Track REMOVED from remoteStream: Kind=${e.track.kind}`);
+                 updateRemoteVideoAppearance();
+             };
+        }
+        if (!remoteStream.getTrackById(event.track.id)) {
+            remoteStream.addTrack(event.track, remoteStream);
+        }
+        remoteVideo.muted = false; // Ensure remote video is NOT muted
+        updateRemoteVideoAppearance();
+    };
+
+    peerConnection.onconnectionstatechange = () => {
+        if (!peerConnection) return; // Guard against calls after connection is closed
+        console.log('[PeerConnection onconnectionstatechange] Connection state change:', peerConnection.connectionState);
+        switch (peerConnection.connectionState) {
+            case 'connected':
+                updateStatus(`Connected with ${peerIdInput.value || 'peer'}.`, 'success');
+                break;
+            case 'disconnected':
+                updateStatus('Peer disconnected. Attempting to reconnect...', 'info');
+                // WebRTC might try to reconnect automatically.
+                break;
+            case 'failed':
+                updateStatus('Connection failed.', 'error');
+                resetCallState(); // Connection definitively failed
+                break;
+            case 'closed':
+                updateStatus('Connection closed.', 'info');
+                // resetCallState(); // Usually called by hangup logic already
+                break;
+        }
+    };
+
+    peerConnection.ondatachannel = (event) => { // For the callee side
+        console.log('[PeerConnection ondatachannel] Incoming data channel detected!');
+        dataChannel = event.channel;
+        console.log(`[PeerConnection ondatachannel] Received data channel: '${dataChannel.label}'`);
+        setupDataChannelEventHandlers(dataChannel);
+    };
+}
+
+function addLocalTracks() {
+    if (localStream && peerConnection) {
+        console.log(`[addLocalTracks] Adding ${localStream.getTracks().length} local tracks to PeerConnection.`);
+        localStream.getTracks().forEach(track => {
+            console.log(`[addLocalTracks] Attempting to add track: Kind=${track.kind}, ID=${track.id}, Enabled=${track.enabled}`);
+            try {
+                peerConnection.addTrack(track, localStream);
+                console.log(`[addLocalTracks] Successfully added track: Kind=${track.kind}`);
+            } catch (e) {
+                console.error(`[addLocalTracks] FAILED to add track: Kind=${track.kind}`, e);
+            }
+        });
+    } else {
+        console.error("[addLocalTracks] Cannot add tracks: localStream or peerConnection missing.");
+    }
+}
+
+async function handleOffer(offer, senderName) {
+    console.log(`[handleOffer] Handling offer from: '${senderName}'`);
+    if (!currentSignalingId) updateCurrentSignalingId(); // Ensure our ID is set
+    console.log(`[handleOffer] My signaling ID (self): '${currentSignalingId}'`);
+
+    if (peerConnection) {
+        console.warn("[handleOffer] Existing peer connection detected. Closing before handling new offer.");
+        closeConnection();
+    }
+    peerConnection = new RTCPeerConnection(configuration);
+    setupPeerConnectionEventHandlers();
+    addLocalTracks(); // Callee also needs to add their tracks
+
+    try {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+        console.log("[handleOffer] Set remote description (offer)");
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        console.log("[handleOffer] Set local description (answer)");
+
+        console.log(`[handleOffer] Sending answer to target: '${senderName}'`);
+        sendMessage({ type: 'answer', target: senderName, answer: answer });
+
+        updateStatus(`Call connected with ${senderName}`, 'success');
+        peerIdInput.value = senderName; // Track who we are talking to
+        callButton.disabled = true;
+        hangupButton.disabled = false;
+        peerIdInput.disabled = true;
+    } catch (error) {
+        console.error('[handleOffer] Error handling offer or creating answer:', error);
+        updateStatus(`Error answering call: ${error.message}`, 'error');
+        resetCallState();
     }
 }
 
 async function handleAnswer(answer) {
     if (!peerConnection) {
-        console.error('Received answer but no peer connection exists.');
+        console.error('[handleAnswer] Received answer but no peer connection exists.');
         return;
     }
-    console.log('Received answer');
+    console.log('[handleAnswer] Received answer.');
     try {
-        // Set Remote Description
         await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-        console.log('Set remote description (answer)');
-        // Connection should now start establishing via ICE exchange
+        console.log('[handleAnswer] Set remote description (answer). Connection should establish.');
+        updateStatus(`Call connected with ${peerIdInput.value || 'peer'}.`, 'success');
     } catch (error) {
-        console.error('Error setting remote description (answer):', error);
+        console.error('[handleAnswer] Error setting remote description (answer):', error);
+        updateStatus(`Error processing answer: ${error.message}`, 'error');
         resetCallState();
     }
 }
 
-// Helper to send messages via WebSocket
-function sendMessage(message) {
-    if (signalingWebSocket && signalingWebSocket.readyState === WebSocket.OPEN) {
-        signalingWebSocket.send(JSON.stringify(message));
-    } else {
-        console.error('WebSocket is not connected.');
+async function handleCandidate(candidate) {
+    if (!peerConnection) {
+        console.error('[handleCandidate] PeerConnection not initialized yet. Cannot add candidate.');
+        return;
+    }
+    if (!candidate) {
+        console.warn("[handleCandidate] Received empty candidate.");
+        return;
+    }
+    try {
+        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        console.log('[handleCandidate] Added received ICE candidate.');
+    } catch (error) {
+        console.error('[handleCandidate] Error adding received ICE candidate', error);
     }
 }
 
-function updateStatus(message, type = 'info') { // type can be 'info', 'error', 'success'
+// --- Data Channel Logic ---
+function setupDataChannelEventHandlers(channel) {
+    if (!channel) return;
+    console.log(`[setupDataChannelEventHandlers] Setting up handlers for data channel '${channel.label}'`);
+    channel.onopen = () => {
+        console.log(`[DataChannel '${channel.label}'] Opened!`);
+        if (chatInput) chatInput.disabled = false;
+        if (sendButton) sendButton.disabled = false;
+        updateStatus('Chat connected!', 'success');
+    };
+    channel.onclose = () => {
+        console.log(`[DataChannel '${channel.label}'] Closed.`);
+        if (chatInput) chatInput.disabled = true;
+        if (sendButton) sendButton.disabled = true;
+        // Don't clear chat messages on close, only on full resetCallState
+    };
+    channel.onerror = (error) => {
+        console.error(`[DataChannel '${channel.label}'] Error:`, error);
+        updateStatus(`Chat channel error: ${error.message}`, 'error');
+    };
+    channel.onmessage = (event) => {
+        try {
+            const messageData = JSON.parse(event.data);
+            console.log(`[DataChannel '${channel.label}'] Message received:`, messageData);
+            if (messageData && messageData.senderName && typeof messageData.text !== 'undefined') {
+                displayChatMessage(messageData.text, messageData.senderName);
+            } else {
+                console.warn("[DataChannel onmessage] Received message in unexpected format:", event.data);
+                displayChatMessage(`Raw: ${event.data}`, 'Unknown Peer');
+            }
+        } catch (error) {
+            console.error("[DataChannel onmessage] Failed to parse message or invalid JSON:", event.data, error);
+            displayChatMessage(`Raw: ${event.data}`, 'Unknown Peer (Error)');
+        }
+    };
+}
+
+function sendMessageViaDataChannel() {
+    if (!chatInput || !dataChannel) return;
+    const messageText = chatInput.value.trim();
+    if (!messageText) return;
+
+    if (dataChannel.readyState === 'open') {
+        const messageData = {
+            senderName: getDisplayNameForChat(),
+            text: messageText
+        };
+        try {
+            dataChannel.send(JSON.stringify(messageData));
+            console.log('[sendMessageViaDataChannel] Sent message data:', messageData);
+            displayChatMessage(messageText, getDisplayNameForChat()); // Display own message
+            chatInput.value = '';
+        } catch (error) {
+            console.error('[sendMessageViaDataChannel] Error sending message:', error);
+            updateStatus('Error sending chat message.', 'error');
+        }
+    } else {
+        console.warn('[sendMessageViaDataChannel] Cannot send, data channel is not open.');
+        updateStatus('Chat channel not open.', 'error');
+    }
+}
+
+function displayChatMessage(messageText, senderName) {
+    if (!chatMessagesDiv) return;
+    const messageElement = document.createElement('p');
+    const ownDisplayName = getDisplayNameForChat();
+    let displaySender = senderName;
+    let messageClass = 'peer-message';
+
+    if (senderName === ownDisplayName || senderName === currentSignalingId || senderName === myRandomId ) { // Check against various self-identifiers
+        displaySender = "Me";
+        messageClass = 'my-message';
+    }
+    messageElement.innerHTML = `<strong>${displaySender}:</strong> ${messageText}`;
+    messageElement.classList.add(messageClass);
+    chatMessagesDiv.appendChild(messageElement);
+    chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
+}
+
+
+// --- Call State Management & Cleanup ---
+function handleUserHangup() { // User clicks the Hangup button
+    console.log('[handleUserHangup] User clicked Hangup button.');
+    const targetPeerId = peerIdInput.value; // This should be the name of the other peer
+    if (targetPeerId && peerConnection && peerConnection.connectionState !== 'closed' && peerConnection.connectionState !== 'failed') {
+        console.log(`[handleUserHangup] Sending hangup signal to ${targetPeerId}`);
+        sendMessage({ type: 'hangup', target: targetPeerId });
+    } else {
+        console.log("[handleUserHangup] Skipping hangup signal (no connection or target).");
+    }
+    resetCallState();
+}
+
+function handleRemoteHangup() { // Hangup signal received from peer
+    console.log("[handleRemoteHangup] Handling hangup initiated by remote peer or server.");
+    // Don't send another 'hangup' message here
+    resetCallState();
+}
+
+function closeConnection() {
+    console.log("--- [closeConnection] Starting cleanup ---");
+    if (dataChannel) {
+        console.log("[closeConnection] Closing data channel");
+        dataChannel.onopen = null; dataChannel.onclose = null; dataChannel.onerror = null; dataChannel.onmessage = null;
+        if (dataChannel.readyState !== 'closed') dataChannel.close();
+        dataChannel = null;
+    }
+    if (peerConnection) {
+        console.log("[closeConnection] Closing peer connection. Current state:", peerConnection.connectionState);
+        peerConnection.getSenders().forEach(sender => sender.track?.stop());
+        peerConnection.ontrack = null; peerConnection.onicecandidate = null; peerConnection.oniceconnectionstatechange = null;
+        peerConnection.onconnectionstatechange = null; peerConnection.onsignalingstatechange = null;
+        peerConnection.ondatachannel = null; peerConnection.onnegotiationneeded = null;
+        if (peerConnection.signalingState !== 'closed') peerConnection.close();
+        peerConnection = null;
+        console.log("[closeConnection] peerConnection set to null.");
+    }
+    if (remoteVideo) remoteVideo.srcObject = null;
+    remoteStream = null;
+
+    // Option A: Stop local tracks (forces new getUserMedia for next call)
+    if (localStream) {
+        console.log("[closeConnection] Stopping local stream tracks");
+        localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
+        if (localVideo) localVideo.srcObject = null;
+        if (startCamButton) startCamButton.disabled = false;
+        if (callButton) callButton.disabled = true; // Must restart cam
+        hasLocalVideo = false;
+        console.log("[closeConnection] localStream stopped and nulled.");
+    }
+    console.log("--- [closeConnection] Finished ---");
+}
+
+function resetCallState() {
+    console.log("--- [resetCallState] Starting ---");
+    closeConnection(); // Always ensure resources are released
+
+    if (callButton) callButton.disabled = true; // Requires cam restart
+    if (startCamButton && localStream === null) startCamButton.disabled = false; // Enable if stream was stopped
+    else if (startCamButton) startCamButton.disabled = true; // Cam already on
+
+    if (hangupButton) hangupButton.disabled = true;
+    if (peerIdInput) {
+        peerIdInput.disabled = false;
+        // peerIdInput.value = ''; // Optional: clear target peer input
+    }
+
+    clearStatus();
+    updateUserInfoDisplay(); // Refresh user info display
+
+    if (chatInput) chatInput.disabled = true;
+    if (sendButton) sendButton.disabled = true;
+    if (chatMessagesDiv) chatMessagesDiv.innerHTML = ''; // Clear chat history
+
+    if (localVideo && !localStream) { // Reset local video appearance if stream was stopped
+        localVideo.style.backgroundColor = '';
+        localVideo.poster = '';
+    }
+    if (remoteVideo) { // Reset remote video appearance
+        remoteVideo.style.backgroundColor = '';
+        remoteVideo.poster = '';
+    }
+    console.log("--- [resetCallState] Finished ---");
+}
+
+function updateStatus(message, type = 'info') {
     if (!statusMessageEl) return;
     statusMessageEl.textContent = message;
-    statusMessageEl.className = `status ${type}`; // Set class for styling
+    statusMessageEl.className = `status ${type}`;
+    // Optionally auto-clear info/success messages after a delay
+    if (type === 'info' || type === 'success') {
+        setTimeout(() => {
+            if (statusMessageEl.textContent === message) clearStatus(); // Only clear if it's still the same message
+        }, 5000); // Clear after 5 seconds
+    }
 }
 
 function clearStatus() {
@@ -810,22 +663,26 @@ function clearStatus() {
     statusMessageEl.className = 'status';
 }
 
-function updateMyName() {
-    if (myNameInput) {
-        myName = myNameInput.value.trim(); // Get value and remove whitespace
-        console.log(`My name set to: ${myName}`);
-        updateUserInfoDisplay(); // Update the top display with the new name
+function updateRemoteVideoAppearance() {
+    if (!remoteStream || !remoteVideo) return;
+    const videoTracks = remoteStream.getVideoTracks();
+    const audioTracks = remoteStream.getAudioTracks();
+
+    if (videoTracks.length > 0) {
+        remoteVideo.style.backgroundColor = '';
+        remoteVideo.poster = '';
+    } else if (audioTracks.length > 0) { // Audio only
+        remoteVideo.style.backgroundColor = '#333';
+        // remoteVideo.poster = 'path/to/audio-only-avatar.png';
+    } else { // No tracks
+        remoteVideo.style.backgroundColor = '';
+        remoteVideo.poster = '';
     }
 }
 
-function updateUserInfoDisplay() {
-    // Update the text content to show Name (if set) and ID
-    const nameToShow = myName || 'Guest'; // Use 'Guest' or keep blank if no name
-    userIdInfoSpan.innerHTML = `You: <strong>${nameToShow}</strong> (ID: <span id="myUserIdDisplay">${currentSignalingId}</span>)`;
-    // Note: Re-setting innerHTML for myUserIdDisplay is slightly redundant but ensures it's always present
-}
-
-function getDisplayName() {
-    // Helper to get the name to be sent in messages (use ID if name is empty)
-    return myName || 'Guest';
-}
+// --- Initial UI State ---
+if (callButton) callButton.disabled = true;
+if (hangupButton) hangupButton.disabled = true;
+if (chatInput) chatInput.disabled = true;
+if (sendButton) sendButton.disabled = true;
+clearStatus();
