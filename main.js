@@ -4,7 +4,7 @@ const remoteVideo = document.getElementById('remoteVideo');
 const startCamButton = document.getElementById('startCamButton');
 const callButton = document.getElementById('callButton');
 const hangupButton = document.getElementById('hangupButton');
-const peerIdInput = document.getElementById('peerIdInput'); // User will input this
+const peerIdInput = document.getElementById('peerIdInput'); // ID of peer whom you need to talk with.
 const chatInput = document.getElementById('chatInput');
 const sendButton = document.getElementById('sendButton');
 const chatMessagesDiv = document.getElementById('chatMessages');
@@ -28,6 +28,7 @@ let myId = 'user-' + Math.random().toString(36).substring(2, 9);
 // Logging id to console.
 console.log('My ID:', myId);
 myUserIdDisplay.textContent =  myId;
+let currentSignalingId =  ''; // id used for current signalling which is default by empty.
 
 if (myNameInput) {
     // Update name when the input loses focus (onblur) or Enter is pressed
@@ -137,12 +138,18 @@ function connectWebSocket() {
     // signalingWebSocket = new WebSocket('ws://localhost:8080');
 
     // for remote running signal server
-    signalingWebSocket = new WebSocket('wss://signal-server-first-version.azurewebsites.net');
+    const signalServerUrl = 'wss://signal-server-first-version.azurewebsites.net'; // signal server url from azure.
+    console.log(`Connecting to signaling server at ${signalServerUrl}`);
+    signalingWebSocket = new WebSocket(signalServerUrl);
 
     signalingWebSocket.onopen = () => {
         console.log('WebSocket connected');
+        // Ensure currentSignalingId is set before identifying
+        if (!currentSignalingId) {
+            updateCurrentSignalingId(); // Initialize if somehow missed
+        }
         // Identify this client to the server
-        sendMessage({ type: 'identify', id: myId });
+        sendMessage({ type: 'identify', id: currentSignalingId });
     };
 
     signalingWebSocket.onmessage = async (event) => {
@@ -152,6 +159,7 @@ function connectWebSocket() {
         switch (message.type) {
             case 'offer':
                 // Received an offer from a peer
+                peerIdInput.value = message.sender;
                 await handleOffer(message.offer, message.sender);
                 break;
             case 'answer':
@@ -159,12 +167,19 @@ function connectWebSocket() {
                 await handleAnswer(message.answer);
                 break;
             case 'candidate':
-                // Received an ICE candidate from a peer
-                await handleCandidate(message.candidate);
+                // Received an ICE candidate from a peer (message.sender is their name)
+                // We need to ensure candidates are added only if they are for the current active peer
+                if (peerIdInput.value === message.sender || !peerIdInput.value) { // Crude check, better with active call state
+                    await handleCandidate(message.candidate);
+                } else {
+                    console.warn(`Received candidate from unexpected sender ${message.sender}, current target is ${peerIdInput.value}`);
+                }
                 break;
             case 'hangup':
-                updateStatus('Peer disconnected.', 'info');
-                handleHangup();
+                if (peerIdInput.value === message.sender) { // Ensure hangup is from current peer
+                    updateStatus(`${message.sender} disconnected.`, 'info');
+                    handleHangupLocally(); // New function to avoid re-sending hangup
+                }
                 break;
             case 'error':
                 console.error('Received error from signaling server:', message.message);
@@ -177,7 +192,10 @@ function connectWebSocket() {
                 break;
             case 'identified':
                 console.log(`Server confirmed identification as ${message.id}`);
-                // You could update UI here if needed
+                // If message.id is different from currentSignalingId, it might indicate an issue or name clash
+                // For simplicity, we assume the server confirms the ID we sent.
+                currentSignalingId = message.id; // Update our ID based on server confirmation
+                updateUserInfoDisplay();
                 break;
             default:
                 console.log('Unknown message type:', message.type);
@@ -198,6 +216,7 @@ function connectWebSocket() {
 }
 
 // Call this function early on, perhaps after getting the ID
+updateCurrentSignalingId();
 connectWebSocket();
 
 // RTC peer connections
@@ -376,12 +395,18 @@ async function handleCandidate(candidate) {
 // main.js (Offer/Answer logic)
 
 callButton.onclick = async () => {
-    const targetPeerId = peerIdInput.value;
-
-    if (!targetPeerId) {
-        updateStatus('Please enter the ID of the peer to call.', 'error');
+    const targetPeerName = peerIdInput.value;
+    if (!targetPeerName) {
+        updateStatus('Please enter the name of the peer you want to call.', 'error');
         return;
     }
+
+    if (!currentSignalingId) { // Ensure our own signaling ID is set
+        updateStatus('Please set your name before calling.', 'error');
+        handleNameChange(); // Attempt to set it from input
+        if (!currentSignalingId) return; // Still no ID, abort
+    }
+
     if (!localStream) {
         updateStatus("Please start your camera first.", 'error');
         return;
@@ -395,8 +420,8 @@ callButton.onclick = async () => {
         return;
    }
 
-    console.log(`Initiating call to ${targetPeerId}`);
-    updateStatus(`Calling ${targetPeerId}...`, 'info');
+    console.log(`Initiating call to ${targetPeerName}`);
+    updateStatus(`Calling ${targetPeerName}...`, 'info');
 
     // *** Disable Call button immediately ***
     callButton.disabled = true;
@@ -436,7 +461,7 @@ callButton.onclick = async () => {
         console.log('Set local description');
 
         // 6. Send Offer via Signaling
-        sendMessage({ type: 'offer', target: targetPeerId, offer: offer });
+        sendMessage({ type: 'offer', target: targetPeerName, offer: offer });
 
         // 7. Update UI
         callButton.disabled = true;
@@ -474,6 +499,8 @@ async function handleOffer(offer, senderId) {
     // 3. Add Local Tracks (Callee also needs to send their stream)
     addLocalTracks();
 
+    if (!currentSignalingId) { updateCurrentSignalingId(); } // Ensure our ID is set
+
     try {
         // 4. Set Remote Description
         await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
@@ -490,7 +517,9 @@ async function handleOffer(offer, senderId) {
         // 7. Send Answer via Signaling
         sendMessage({ type: 'answer', target: senderId, answer: answer });
 
-        // 8. Update UI
+        // Update UI
+        updateStatus(`Call connected with ${senderId}`, 'success');
+        peerIdInput.value = senderId;
         callButton.disabled = true; // Cannot initiate another call
         hangupButton.disabled = false;
         peerIdInput.disabled = true;
@@ -505,7 +534,7 @@ async function handleOffer(offer, senderId) {
 hangupButton.onclick = handleHangup;
 
 function handleHangup() {
-    console.log('Hanging up call.');
+    console.log('User clicked hangup button.');
     // Notify the other peer if connected
     const targetPeerId = peerIdInput.value; // Get ID from input (might be caller or callee)
     if (targetPeerId && peerConnection && peerConnection.connectionState !== 'closed' && peerConnection.connectionState !== 'failed') {
@@ -657,6 +686,45 @@ clearStatus();
 
 
 // Helper functions.
+function handleHangupLocally() {
+    console.log("Handling hangup initiated by remote peer or local error.");
+    // Don't send another 'hangup' message here
+    resetCallState();
+}
+
+function handleNameChange() {
+    if (myNameInput) {
+        const newName = myNameInput.value.trim();
+        if (newName && newName !== myName) { // Only update if name is not empty and has changed
+            myName = newName;
+            console.log(`My name set to: ${myName}`);
+            updateCurrentSignalingId(); // Crucial: update the ID used for signaling
+            updateUserInfoDisplay();
+            // Optional: If already connected to WebSocket, re-identify if desired,
+            // but for simplicity, we'll assume name is set before serious signaling.
+            // If changing name mid-session is a feature, the server would need to handle ID changes.
+        } else if (!newName && myName) { // Name cleared
+            myName = '';
+            updateCurrentSignalingId();
+            updateUserInfoDisplay();
+        }
+        myNameInput.value = myName; // Reflect trimmed name back to input
+    }
+}
+
+function updateCurrentSignalingId() {
+    // Use the provided name if available, otherwise fall back to the random ID
+    currentSignalingId = myName || myId;
+    console.log(`Current Signaling ID set to: ${currentSignalingId}`);
+    // If WebSocket is connected, you might want to send an 'identify' message with the new ID
+    // This depends on your server logic for handling re-identification.
+    // For this example, we'll assume the ID is set before call initiation.
+    if (signalingWebSocket && signalingWebSocket.readyState === WebSocket.OPEN) {
+        sendMessage({ type: 'identify', id: currentSignalingId });
+        console.log(`Re-identified with server as: ${currentSignalingId}`);
+    }
+}
+
 // Helper to display messages in the UI
 function displayChatMessage(messageText, senderName) {
     const messageElement = document.createElement('p');
@@ -752,12 +820,12 @@ function updateMyName() {
 
 function updateUserInfoDisplay() {
     // Update the text content to show Name (if set) and ID
-    const nameToShow = myName ? myName : 'Guest'; // Use 'Guest' or keep blank if no name
-    userIdInfoSpan.innerHTML = `You: <strong>${nameToShow}</strong> (ID: <span id="myUserIdDisplay">${myId}</span>)`;
+    const nameToShow = myName || 'Guest'; // Use 'Guest' or keep blank if no name
+    userIdInfoSpan.innerHTML = `You: <strong>${nameToShow}</strong> (ID: <span id="myUserIdDisplay">${currentSignalingId}</span>)`;
     // Note: Re-setting innerHTML for myUserIdDisplay is slightly redundant but ensures it's always present
 }
 
 function getDisplayName() {
     // Helper to get the name to be sent in messages (use ID if name is empty)
-    return myName || myId;
+    return myName || 'Guest';
 }
