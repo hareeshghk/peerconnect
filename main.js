@@ -1,4 +1,4 @@
-// main.js
+// Author: Hareesh Kumar Gajulapalli
 
 // --- HTML Element References ---
 const localVideo = document.getElementById('localVideo');
@@ -33,17 +33,11 @@ const configuration = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        // Add TURN servers here if needed for NAT traversal
-        // {
-        //   urls: 'turn:your-turn-server.com:3478',
-        //   username: 'user',
-        //   credential: 'password'
-        // }
     ]
 };
 
 // --- Initialization ---
-updateCurrentSignalingId(); // Set initial signaling ID (will use randomId)
+updateCurrentSignalingId();
 updateUserInfoDisplay();
 connectWebSocket();
 
@@ -230,8 +224,8 @@ async function startMedia() {
 
 // --- WebSocket Signaling ---
 function connectWebSocket() {
-    // !!! REPLACE WITH YOUR AZURE URL !!!
-    const signalServerUrl = 'wss://signal-server-first-version.azurewebsites.net';
+    // REPLACE WITH YOUR AZURE URL, sample is wss://<webapp name>.azurewebsites.net or wss://127.0.0.1:8080 if signal server running locally at 8080
+    const signalServerUrl = APP_CONFIG.SIGNAL_SERVER_URL;
     console.log(`[connectWebSocket] Connecting to signaling server at ${signalServerUrl}`);
     signalingWebSocket = new WebSocket(signalServerUrl);
 
